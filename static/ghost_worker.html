@@ -3,150 +3,306 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termux Compute Node</title>
+    <title>Termux Compute Node — Browser Worker</title>
     <style>
-        body { font-family: monospace; background: #1a1a1a; color: #0f0; padding: 20px; }
-        .status { padding: 10px; background: #222; border: 1px solid #0f0; margin: 10px 0; }
-        .active { border-color: #0f0; }
-        .inactive { border-color: #f00; }
-        .log { background: #111; border: 1px solid #333; padding: 10px; max-height: 200px; overflow: auto; font-size: 12px; color: #8f8; white-space: pre-wrap; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', Monaco, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 { font-size: 20px; margin-bottom: 16px; background: linear-gradient(90deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .status {
+            padding: 16px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .status.active { border-color: #238636; }
+        .status.inactive { border-color: #da3633; }
+        .status.processing { border-color: #d29922; }
+        .log {
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 12px;
+            height: 300px;
+            overflow-y: auto;
+            font-size: 12px;
+            color: #8b949e;
+        }
+        .log-line { margin-bottom: 4px; }
+        .log-line.info { color: #58a6ff; }
+        .log-line.success { color: #3fb950; }
+        .log-line.error { color: #f85149; }
+        .log-line.warn { color: #d29922; }
+        button {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-right: 8px;
+        }
+        button:hover { background: #30363d; }
+        button.primary { background: #238636; border-color: #238636; color: white; }
+        button.primary:hover { background: #2ea043; }
+        #model-select {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 13px;
+            margin-bottom: 12px;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
-    <h1>🖥️ Termux Compute Node (Browser Worker)</h1>
+    <h1>👻 Ghost Compute Node</h1>
+
     <div id="status" class="status inactive">
-        <strong>Status:</strong> <span id="status-text">Connecting...</span><br>
-        <strong>Worker ID:</strong> <span id="worker-id">Loading...</span><br>
+        <strong>Status:</strong> <span id="status-text">Initializing...</span><br>
+        <strong>Worker ID:</strong> <span id="worker-id">—</span><br>
+        <strong>Model:</strong> <span id="model-status">None</span><br>
         <strong>Tasks Completed:</strong> <span id="task-count">0</span>
     </div>
+
+    <div style="margin-bottom: 16px;">
+        <select id="model-select">
+            <option value="">Select a model to load...</option>
+            <option value="/models/gemma-2b-it-q4_0.gguf">Gemma 2 2B (Q4_0) — ~1.5GB</option>
+            <option value="/models/gemma-2b-it-q8_0.gguf">Gemma 2 2B (Q8_0) — ~2.5GB</option>
+            <option value="/models/phi-3-mini-q4.gguf">Phi-3 Mini (Q4) — ~2GB</option>
+        </select>
+        <button class="primary" onclick="loadSelectedModel()">Load Model</button>
+        <button onclick="connectToPool()">Reconnect</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
     <div class="log" id="log"></div>
 
-    <script>
+    <script type="module">
+        import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.0.0/esm/index.js';
+
+        // Service Worker registration for background persistence
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/static/ghost_worker_sw.js').catch(e => console.log('SW failed:', e));
+            navigator.serviceWorker.register('ghost_worker_sw.js')
+                .then(() => log('Service Worker registered', 'success'))
+                .catch(e => log('SW failed: ' + e.message, 'error'));
         }
 
-        const WORKER_ID = 'wasm-' + Math.random().toString(36).substr(2, 9);
+        const WORKER_ID = 'ghost-' + Math.random().toString(36).substr(2, 9);
         let taskCount = 0;
         let ws = null;
-        let reconnectDelay = 2000;
+        let wllama = null;
+        let modelLoaded = false;
+        let currentModel = '';
 
-        function log(msg) {
+        function log(msg, level = 'info') {
             const el = document.getElementById('log');
-            const line = '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n';
-            el.textContent = (el.textContent + line).slice(-4000);
+            const line = document.createElement('div');
+            line.className = 'log-line ' + level;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            el.appendChild(line);
             el.scrollTop = el.scrollHeight;
         }
 
-        function updateStatus(text, active) {
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function updateStatus(text, state) {
             document.getElementById('status-text').textContent = text;
-            document.getElementById('status').className = 'status ' + (active ? 'active' : 'inactive');
+            document.getElementById('status').className = 'status ' + state;
             document.getElementById('worker-id').textContent = WORKER_ID;
             document.getElementById('task-count').textContent = taskCount;
+            document.getElementById('model-status').textContent = modelLoaded ? currentModel : 'None';
         }
 
-        function connectToServer() {
-            try {
-                const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') +
-                              '//' + window.location.host + '/ws/worker';
-                log('Connecting to ' + wsUrl);
-                ws = new WebSocket(wsUrl);
-
-                ws.onopen = () => {
-                    reconnectDelay = 2000;
-                    updateStatus('Connected', true);
-                    log('Connected as ' + WORKER_ID);
-                    // v2.3 heartbeat + hardware info
-                    try {
-                        ws.send(JSON.stringify({
-                            type: 'heartbeat',
-                            hardware: {
-                                hostname: WORKER_ID,
-                                platform: 'WASM/Browser',
-                                cpu_cores: navigator.hardwareConcurrency || 1,
-                                gpu: !!navigator.gpu,
-                                model_loaded: false
-                            }
-                        }));
-                    } catch (e) {
-                        log('heartbeat send failed: ' + e.message);
-                    }
-                };
-
-                ws.onmessage = (event) => {
-                    try {
-                        const msg = JSON.parse(event.data);
-                        // v2.3: type === 'inference'
-                        // legacy: type === 'inference_request'
-                        if (msg.type === 'inference' || msg.type === 'inference_request') {
-                            handleInference(msg);
-                        }
-                    } catch (e) {
-                        log('parse error: ' + e.message);
-                    }
-                };
-
-                ws.onerror = (err) => {
-                    updateStatus('Error', false);
-                    log('WebSocket error');
-                };
-
-                ws.onclose = () => {
-                    updateStatus('Disconnected', false);
-                    log('Disconnected. Reconnecting in ' + (reconnectDelay / 1000) + 's...');
-                    setTimeout(connectToServer, reconnectDelay);
-                    reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
-                };
-            } catch (e) {
-                updateStatus('Error', false);
-                log('connect failed: ' + e.message);
-                setTimeout(connectToServer, reconnectDelay);
+        async function loadSelectedModel() {
+            const url = document.getElementById('model-select').value;
+            if (!url) {
+                log('Select a model first', 'warn');
+                return;
             }
-        }
+            if (wllama) {
+                log('Unloading previous model...', 'info');
+                wllama = null;
+            }
 
-        function handleInference(msg) {
-            const jobId = msg.job_id || msg.task_id;
-            const prompt = msg.prompt || '';
-            updateStatus('Processing...', true);
-            log('Job ' + jobId + ': ' + prompt.slice(0, 60));
+            updateStatus('Loading model...', 'processing');
+            log('Downloading model: ' + url, 'info');
+
             try {
-                // Placeholder echo — swap in transformers.js / WebLLM for real inference
-                const result = '[WASM-' + WORKER_ID + '] ' + prompt.slice(0, 200);
+                wllama = new Wllama();
+                await wllama.loadModelFromUrl(url);
+                modelLoaded = true;
+                currentModel = url.split('/').pop();
+                updateStatus('Model loaded. Ready.', 'active');
+                log('Model loaded: ' + currentModel, 'success');
 
-                // Prefer v2.3 response shape; also send legacy alias if needed
-                const payload = {
-                    type: 'inference_result',
-                    job_id: jobId,
-                    result: result
-                };
-                ws.send(JSON.stringify(payload));
-                taskCount++;
-                updateStatus('Connected', true);
-                log('Job ' + jobId + ' done');
-            } catch (e) {
-                log('inference error: ' + e.message);
-                try {
+                // Notify server
+                if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
-                        type: 'inference_result',
-                        job_id: jobId,
-                        result: 'Error: ' + e.message
+                        type: 'register',
+                        worker_id: WORKER_ID,
+                        platform: 'WASM/Browser',
+                        capabilities: {
+                            has_gpu: !!navigator.gpu,
+                            cpu_cores: navigator.hardwareConcurrency || 1,
+                            engine: 'wllama',
+                            model_loaded: true,
+                            model_family: currentModel.includes('gemma') ? 'gemma' : 'phi'
+                        },
+                        models: [currentModel]
                     }));
-                } catch (_) {}
-                updateStatus('Connected', true);
+                }
+            } catch (e) {
+                log('Model load failed: ' + e.message, 'error');
+                updateStatus('Model failed', 'inactive');
+                modelLoaded = false;
             }
         }
 
-        // Periodic heartbeat while connected
+        async function handleInference(msg) {
+            updateStatus('Processing inference...', 'processing');
+            log('Job ' + msg.task_id + ': ' + msg.prompt.substring(0, 40) + '...', 'info');
+
+            if (!modelLoaded || !wllama) {
+                const result = `[Ghost ${WORKER_ID}] No model loaded. Echo: ${msg.prompt.substring(0, 50)}...`;
+                ws.send(JSON.stringify({
+                    type: 'inference_response',
+                    task_id: msg.task_id,
+                    result: result
+                }));
+                updateStatus('Connected (no model)', 'active');
+                return;
+            }
+
+            try {
+                const stream = msg.stream || false;
+                let fullResult = '';
+
+                const output = await wllama.createCompletion(msg.prompt, {
+                    nPredict: 128,
+                    sampling: { temp: 0.8 },
+                    onNewToken: (token) => {
+                        fullResult += token;
+                        if (stream && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'token',
+                                task_id: msg.task_id,
+                                token: token
+                            }));
+                        }
+                    }
+                });
+
+                // Send final result
+                if (stream) {
+                    ws.send(JSON.stringify({
+                        type: 'stream_done',
+                        task_id: msg.task_id,
+                        result: fullResult
+                    }));
+                } else {
+                    ws.send(JSON.stringify({
+                        type: 'inference_response',
+                        task_id: msg.task_id,
+                        result: fullResult
+                    }));
+                }
+
+                taskCount++;
+                updateStatus('Connected. Ready.', 'active');
+                log('Job ' + msg.task_id + ' complete (' + fullResult.length + ' chars)', 'success');
+            } catch (e) {
+                log('Inference error: ' + e.message, 'error');
+                ws.send(JSON.stringify({
+                    type: 'inference_response',
+                    task_id: msg.task_id,
+                    result: `Error: ${e.message}`
+                }));
+                updateStatus('Error', 'inactive');
+            }
+        }
+
+        function connectToPool() {
+            if (ws) ws.close();
+            const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') +
+                          '//' + window.location.host + '/ws/worker';
+
+            log('Connecting to ' + wsUrl, 'info');
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus('Connected to pool', 'active');
+                log('Connected', 'success');
+                ws.send(JSON.stringify({
+                    type: 'register',
+                    worker_id: WORKER_ID,
+                    platform: 'WASM/Browser',
+                    capabilities: {
+                        has_gpu: !!navigator.gpu,
+                        cpu_cores: navigator.hardwareConcurrency || 1,
+                        engine: 'wllama',
+                        model_loaded: modelLoaded,
+                        model_family: currentModel.includes('gemma') ? 'gemma' : 'phi'
+                    },
+                    models: modelLoaded ? [currentModel] : []
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'inference_request' || msg.type === 'inference') {
+                        handleInference(msg);
+                    } else if (msg.type === 'load_model') {
+                        document.getElementById('model-select').value = msg.path || '';
+                        loadSelectedModel();
+                    } else if (msg.type === 'ping') {
+                        ws.send(JSON.stringify({ type: 'heartbeat' }));
+                    }
+                } catch (e) {
+                    log('Message error: ' + e.message, 'error');
+                }
+            };
+
+            ws.onerror = (e) => {
+                log('WebSocket error', 'error');
+                updateStatus('Connection error', 'inactive');
+            };
+
+            ws.onclose = () => {
+                log('Disconnected. Retrying in 5s...', 'warn');
+                updateStatus('Disconnected', 'inactive');
+                setTimeout(connectToPool, 5000);
+            };
+        }
+
+        // Auto-connect on load
+        connectToPool();
+
+        // Keep-alive ping every 30s
         setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                try {
-                    ws.send(JSON.stringify({ type: 'heartbeat' }));
-                } catch (_) {}
+                ws.send(JSON.stringify({ type: 'heartbeat' }));
             }
         }, 30000);
 
-        document.getElementById('worker-id').textContent = WORKER_ID;
-        connectToServer();
+        // Expose for onclick handlers outside module scope
+        window.loadSelectedModel = loadSelectedModel;
+        window.connectToPool = connectToPool;
+        window.clearLog = clearLog;
     </script>
 </body>
 </html>
