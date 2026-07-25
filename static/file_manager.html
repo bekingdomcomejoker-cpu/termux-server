@@ -39,10 +39,7 @@
         }
         .crumb:hover { background: #21262d; }
         .crumb-sep { color: #8b949e; }
-        #actions {
-            display: flex;
-            gap: 8px;
-        }
+        #actions { display: flex; gap: 8px; }
         button {
             background: #21262d;
             border: 1px solid #30363d;
@@ -57,16 +54,8 @@
         button.primary:hover { background: #2ea043; }
         button.danger { background: #da3633; border-color: #da3633; }
         button.danger:hover { background: #f85149; }
-        #main {
-            padding: 16px 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        #file-list {
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            overflow: hidden;
-        }
+        #main { padding: 16px 20px; max-width: 1200px; margin: 0 auto; }
+        #file-list { border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
         .file-row {
             display: flex;
             align-items: center;
@@ -77,29 +66,11 @@
         }
         .file-row:hover { background: #161b22; }
         .file-row:last-child { border-bottom: none; }
-        .file-icon {
-            width: 20px; text-align: center;
-            margin-right: 12px;
-            font-size: 16px;
-        }
-        .file-name {
-            flex: 1;
-            color: #c9d1d9;
-            word-break: break-all;
-        }
+        .file-icon { width: 20px; text-align: center; margin-right: 12px; font-size: 16px; }
+        .file-name { flex: 1; color: #c9d1d9; word-break: break-all; }
         .file-name.dir { color: #58a6ff; font-weight: 500; }
-        .file-size {
-            width: 100px;
-            text-align: right;
-            color: #8b949e;
-            font-size: 12px;
-        }
-        .file-date {
-            width: 160px;
-            text-align: right;
-            color: #8b949e;
-            font-size: 12px;
-        }
+        .file-size { width: 100px; text-align: right; color: #8b949e; font-size: 12px; }
+        .file-date { width: 160px; text-align: right; color: #8b949e; font-size: 12px; }
         .file-actions {
             width: 120px;
             text-align: right;
@@ -107,15 +78,8 @@
             gap: 6px;
             justify-content: flex-end;
         }
-        .file-actions button {
-            padding: 4px 8px;
-            font-size: 12px;
-        }
-        #empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #8b949e;
-        }
+        .file-actions button { padding: 4px 8px; font-size: 12px; }
+        #empty-state { text-align: center; padding: 60px 20px; color: #8b949e; }
         .modal-overlay {
             display: none;
             position: fixed;
@@ -144,11 +108,7 @@
             justify-content: space-between;
             align-items: center;
         }
-        .modal-body {
-            padding: 20px;
-            overflow: auto;
-            flex: 1;
-        }
+        .modal-body { padding: 20px; overflow: auto; flex: 1; }
         .modal-footer {
             padding: 12px 20px;
             border-top: 1px solid #30363d;
@@ -173,15 +133,8 @@
             line-height: 1.5;
             resize: vertical;
         }
-        .form-group {
-            margin-bottom: 16px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 13px;
-            color: #8b949e;
-        }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; margin-bottom: 6px; font-size: 13px; color: #8b949e; }
         #toast {
             position: fixed;
             bottom: 20px;
@@ -198,16 +151,29 @@
         }
         #toast.show { opacity: 1; }
         #toast.error { background: #da3633; }
+        .owner-only { display: none !important; }
+        body.owner .owner-only { display: flex !important; }
+        body.owner .public-only { display: none !important; }
+        #owner-badge {
+            display: none;
+            font-size: 11px;
+            background: #238636;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+        }
+        body.owner #owner-badge { display: inline; }
     </style>
 </head>
 <body>
     <div id="header">
-        <h1>📁 Files</h1>
+        <h1>📁 Files <span id="owner-badge">OWNER</span></h1>
         <div id="breadcrumb"></div>
         <div id="actions">
-            <button onclick="showUploadModal()">Upload</button>
-            <button onclick="showNewFileModal()">New File</button>
-            <button onclick="showNewFolderModal()">New Folder</button>
+            <button onclick="showUploadModal()" class="owner-only">Upload</button>
+            <button onclick="showNewFileModal()" class="owner-only">New File</button>
+            <button onclick="showNewFolderModal()" class="owner-only">New Folder</button>
             <button class="primary" onclick="window.open('/terminal','_blank')">Terminal</button>
         </div>
     </div>
@@ -285,6 +251,7 @@
 
     <script>
         let currentPath = '';
+        let isOwner = false;
 
         function getApiBase() {
             return window.location.protocol + '//' + window.location.host;
@@ -341,14 +308,19 @@
                     const onClick = item.type === 'directory'
                         ? `onclick="navigateTo('${item.path}')"`
                         : '';
+                    const writeBtns = isOwner
+                        ? (item.type === 'file'
+                            ? `<button onclick="event.stopPropagation();editFile('${item.path}')">✎</button><button class="danger" onclick="event.stopPropagation();deleteFile('${item.path}')">🗑</button>`
+                            : `<button class="danger" onclick="event.stopPropagation();deleteFile('${item.path}')">🗑</button>`)
+                        : '';
                     return `<div class="file-row" ${onClick}>
                         <div class="file-icon">${icon}</div>
                         <div class="${nameClass}">${item.name}</div>
                         <div class="file-size">${size}</div>
                         <div class="file-date">${formatDate(item.modified)}</div>
                         <div class="file-actions">
-                            ${item.type === 'file' ? `<button onclick="event.stopPropagation();downloadFile('${item.path}')">⬇</button><button onclick="event.stopPropagation();editFile('${item.path}')">✎</button>` : ''}
-                            <button class="danger" onclick="event.stopPropagation();deleteFile('${item.path}')">🗑</button>
+                            ${item.type === 'file' ? `<button onclick="event.stopPropagation();downloadFile('${item.path}')">⬇</button>` : ''}
+                            ${writeBtns}
                         </div>
                     </div>`;
                 }).join('');
@@ -402,7 +374,7 @@
                     showToast('Saved!');
                     closeModal('editModal');
                 } else {
-                    showToast(data.error, true);
+                    showToast(data.error || 'Save failed (owner only)', true);
                 }
             } catch (e) {
                 showToast(e.message, true);
@@ -418,7 +390,7 @@
                     showToast('Deleted');
                     loadFiles();
                 } else {
-                    showToast(data.error, true);
+                    showToast(data.error || 'Delete failed (owner only)', true);
                 }
             } catch (e) {
                 showToast(e.message, true);
@@ -456,7 +428,7 @@
                     closeModal('uploadModal');
                     loadFiles();
                 } else {
-                    showToast(data.error || 'Upload failed', true);
+                    showToast(data.error || 'Upload failed (owner only)', true);
                 }
             } catch (e) {
                 showToast(e.message, true);
@@ -479,7 +451,7 @@
                     closeModal('newFileModal');
                     loadFiles();
                 } else {
-                    showToast(data.error, true);
+                    showToast(data.error || 'Create failed (owner only)', true);
                 }
             } catch (e) {
                 showToast(e.message, true);
@@ -502,15 +474,26 @@
                     closeModal('newFolderModal');
                     loadFiles();
                 } else {
-                    showToast(data.error, true);
+                    showToast(data.error || 'Create failed (owner only)', true);
                 }
             } catch (e) {
                 showToast(e.message, true);
             }
         }
 
+        async function checkOwner() {
+            try {
+                const res = await fetch(getApiBase() + '/auth/check');
+                const data = await res.json();
+                if (data.owner) {
+                    isOwner = true;
+                    document.body.classList.add('owner');
+                }
+            } catch(e) {}
+        }
+
         renderBreadcrumb();
-        loadFiles();
+        checkOwner().then(() => loadFiles());
     </script>
 </body>
 </html>
