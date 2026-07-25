@@ -2,22 +2,23 @@
 """
 duck_ai_chat.py — Duck.ai automation (AskRain-style)
 
-Primary path: unofficial HTTP clients (duckai / duck-chat style) — preferred.
+Primary path: unofficial HTTP clients (duckai / duck-chat / ddgs) — preferred.
 Fallback path: Selenium against https://duck.ai/ (fragile; UI changes).
 
+Note: PyPI package `duckai` ships amd64/macOS wheels only — on Termux arm64
+prefer `duckduckgo-search` / `ddgs` or Selenium.
+
 Env (all optional except prompt):
-  DUCKAI_PROMPT          First user message (required for one-shot)
-  DUCKAI_MODEL           Model id string (see --list-models)
+  DUCKAI_PROMPT          First user message
+  DUCKAI_MODEL           Model id (see --list-models)
   DUCKAI_MAX_TURNS       Default 3
-  DUCKAI_TURN_DELAY      Seconds between turns (default 16; public clients often ~1/15s)
+  DUCKAI_TURN_DELAY      Seconds between turns (default 16)
   DUCKAI_MODE            api | selenium | auto  (default auto)
   DUCKAI_HEADLESS        1/0 for selenium (default 1)
-  CHROME_BIN             Chromium path (Termux default set below)
-  CHROMEDRIVER           chromedriver path
-  DUCKAI_LOG_DIR         Log directory
+  CHROME_BIN / CHROMEDRIVER
+  DUCKAI_LOG_DIR
 
-Disclaimer: Unofficial. Respect DuckDuckGo terms, rate limits, and privacy norms.
-Do not overload the service. Not affiliated with DuckDuckGo.
+Disclaimer: Unofficial. Respect DuckDuckGo terms and rate limits.
 """
 
 from __future__ import annotations
@@ -75,7 +76,6 @@ def save_text(name: str, text: str) -> None:
 
 
 def try_api_chat(prompt: str, model: str) -> str | None:
-    """Return reply text or None if no API client works."""
     model = MODEL_ALIASES.get(model, model)
 
     try:
@@ -107,6 +107,26 @@ def try_api_chat(prompt: str, model: str) -> str | None:
     except Exception as e:
         log(f"[api:duck_chat] unavailable: {e}")
 
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+
+        log("[api:ddgs] trying chat…")
+        with DDGS() as ddgs:
+            if hasattr(ddgs, "chat"):
+                return ddgs.chat(prompt, model=model)
+    except Exception as e:
+        log(f"[api:ddgs] unavailable: {e}")
+
+    try:
+        from ddgs import DDGS as DDGS2  # type: ignore
+
+        log("[api:ddgs-pkg] trying…")
+        with DDGS2() as ddgs:
+            if hasattr(ddgs, "chat"):
+                return ddgs.chat(prompt, model=model)
+    except Exception as e:
+        log(f"[api:ddgs-pkg] unavailable: {e}")
+
     return None
 
 
@@ -131,7 +151,6 @@ def build_driver():
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
 
-    service = None
     if os.path.exists(CHROMEDRIVER):
         service = Service(CHROMEDRIVER)
     else:
@@ -149,9 +168,10 @@ def build_driver():
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
             {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                """
+                "source": (
+                    "Object.defineProperty(navigator, 'webdriver', "
+                    "{get: () => undefined});"
+                )
             },
         )
     except Exception:
@@ -175,7 +195,7 @@ def selenium_find_input(driver, timeout: int = 25):
     last_err = None
     for sel in selectors:
         try:
-            el = WebDriverWait(driver, timeout // len(selectors) + 3).until(
+            el = WebDriverWait(driver, max(3, timeout // len(selectors))).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, sel))
             )
             if el.is_displayed():
@@ -245,7 +265,9 @@ def selenium_wait_reply(driver, previous_len: int, timeout: int = 120) -> str:
     raise TimeoutError("Timed out waiting for Duck.ai reply")
 
 
-def run_selenium(prompt: str, followups: list[str], model: str) -> list[tuple[str, str]]:
+def run_selenium(
+    prompt: str, followups: list[str], model: str, max_turns: int = MAX_TURNS
+) -> list[tuple[str, str]]:
     from selenium.webdriver.common.by import By
 
     driver = build_driver()
@@ -271,7 +293,7 @@ def run_selenium(prompt: str, followups: list[str], model: str) -> list[tuple[st
                 pass
 
         turns = [prompt] + followups
-        for i, msg in enumerate(turns[:MAX_TURNS]):
+        for i, msg in enumerate(turns[:max_turns]):
             before = len((driver.find_element(By.TAG_NAME, "body").text or ""))
             selenium_send(driver, msg)
             try:
@@ -315,11 +337,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=("auto", "api", "selenium"), default=MODE)
     parser.add_argument("--max-turns", type=int, default=MAX_TURNS)
     parser.add_argument(
-        "-f",
-        "--followup",
-        action="append",
-        default=[],
-        help="Extra turn (repeatable)",
+        "-f", "--followup", action="append", default=[], help="Extra turn (repeatable)"
     )
     parser.add_argument("--list-models", action="store_true")
     args = parser.parse_args()
@@ -328,8 +346,8 @@ def main() -> int:
         print("Common model ids / aliases:")
         for k, v in MODEL_ALIASES.items():
             print(f"  {k:20} -> {v}")
-        print("\nInstall API client:  pip install -U duckai")
-        print("Selenium fallback needs: pip install selenium")
+        print("\nOn Termux/arm64: pip install -U duckduckgo-search selenium")
+        print("Package duckai has no arm64 wheels — use ddgs or Selenium.")
         return 0
 
     prompt = (args.prompt or "").strip()
@@ -337,19 +355,18 @@ def main() -> int:
         log("No prompt. Set DUCKAI_PROMPT or pass as argument.")
         return 2
 
-    global MAX_TURNS
-    MAX_TURNS = args.max_turns
+    max_turns = args.max_turns
     mode = args.mode
     model = args.model
 
-    log(f"mode={mode} model={model} max_turns={MAX_TURNS}")
+    log(f"mode={mode} model={model} max_turns={max_turns}")
 
     if mode in ("auto", "api"):
         reply = try_api_chat(prompt, model)
         if reply:
             print(reply)
             save_text("conversation.log", f"USER: {prompt}\n\nAI: {reply}")
-            for fu in args.followup[: max(0, MAX_TURNS - 1)]:
+            for fu in args.followup[: max(0, max_turns - 1)]:
                 time.sleep(TURN_DELAY + random.uniform(0, 1))
                 r2 = try_api_chat(fu, model)
                 if not r2:
@@ -365,7 +382,7 @@ def main() -> int:
         log("Falling back to Selenium…")
 
     try:
-        run_selenium(prompt, args.followup, model)
+        run_selenium(prompt, args.followup, model, max_turns=max_turns)
     except Exception as e:
         log(f"Selenium failed: {e}")
         return 1
