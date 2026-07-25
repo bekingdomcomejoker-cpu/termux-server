@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termux Compute Pool — Terminal</title>
+    <title>Termux Compute Pool — Node Terminal</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -33,9 +33,16 @@
             width: 8px; height: 8px;
             border-radius: 50%;
             background: #238636;
+            animation: pulse 2s infinite;
         }
         #toolbar .status-dot.disconnected {
             background: #da3633;
+            animation: none;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
         }
         #toolbar button {
             background: #21262d;
@@ -47,6 +54,15 @@
             font-size: 12px;
         }
         #toolbar button:hover { background: #30363d; }
+        #toolbar .badge {
+            background: linear-gradient(90deg, #238636, #2ea043);
+            color: white;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: auto;
+        }
         #terminal-container {
             flex: 1;
             padding: 8px;
@@ -65,34 +81,23 @@
             text-align: center;
         }
         #connection-error h3 { color: #da3633; margin-bottom: 8px; }
-        #mode-badge {
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 10px;
-            background: #30363d;
-            color: #8b949e;
-        }
-        #mode-badge.owner { background: #238636; color: white; }
     </style>
 </head>
 <body>
     <div id="toolbar">
         <div class="status">
             <div class="status-dot" id="status-dot"></div>
-            <span id="status-text">Connecting...</span>
+            <span id="status-text">Connecting to pool node...</span>
         </div>
-        <span id="mode-badge">donor</span>
         <button onclick="reconnect()">Reconnect</button>
         <button onclick="clearTerm()">Clear</button>
-        <span style="margin-left:auto; font-size:11px; color:#8b949e;">
-            Termux Compute Pool v2.3
-        </span>
+        <span class="badge" id="mode-badge">PUBLIC NODE</span>
     </div>
     <div id="terminal-container"></div>
     <div id="connection-error">
-        <h3>Connection Lost</h3>
-        <p>WebSocket connection failed. Check server status.</p>
-        <button onclick="reconnect()" style="margin-top:12px;">Reconnect</button>
+        <h3>Node Offline</h3>
+        <p>Could not connect to pool terminal.</p>
+        <button onclick="reconnect()" style="margin-top:12px;">Retry</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -130,12 +135,12 @@
             return protocol + '//' + window.location.host + '/ws/terminal';
         }
 
-        function updateStatus(isConnected) {
+        function updateStatus(connected) {
             const dot = document.getElementById('status-dot');
             const text = document.getElementById('status-text');
-            if (isConnected) {
+            if (connected) {
                 dot.classList.remove('disconnected');
-                text.textContent = 'Connected';
+                text.textContent = 'Pool node connected';
                 document.getElementById('connection-error').style.display = 'none';
             } else {
                 dot.classList.add('disconnected');
@@ -146,15 +151,11 @@
 
         async function checkOwner() {
             try {
-                const res = await fetch(window.location.protocol + '//' + window.location.host + '/auth/check');
+                const res = await fetch('/auth/check');
                 const data = await res.json();
-                const badge = document.getElementById('mode-badge');
                 if (data.owner) {
-                    badge.textContent = 'owner';
-                    badge.classList.add('owner');
-                } else {
-                    badge.textContent = 'donor';
-                    badge.classList.remove('owner');
+                    document.getElementById('mode-badge').textContent = 'OWNER MODE';
+                    document.getElementById('mode-badge').style.background = '#bc8cff';
                 }
             } catch(e) {}
         }
@@ -181,7 +182,8 @@
                 updateStatus(false);
             };
 
-            ws.onerror = () => {
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
                 connected = false;
                 updateStatus(false);
             };
