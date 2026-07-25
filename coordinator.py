@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 
 # ── Configure your instances here ──────────────────────────────
 INSTANCES = {
-    "original": "https://8000-i7ybv0vcyztqxzo7i99r4-bd2e14d5.us1.manus.computer",
+    "original": "https://8000-inkred4fbxunhjm0lr6kx-74e78eb2.us2.manus.computer",
     "second":   "https://8000-i0nugvn3w77z3rlgv7bzk-5ae40618.us1.manus.computer",
     "node3":    "https://8000-ixqkbx2bgwgtz99ekulpg-13d18888.us1.manus.computer",
     "node4":    "https://8000-i7rvsrp7v7fxkzoijqq0l-58bdd40e.us1.manus.computer",
