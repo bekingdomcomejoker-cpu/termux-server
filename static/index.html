@@ -1,303 +1,210 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termux Compute Pool</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background: #0d1117;
-            color: #c9d1d9;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            font-size: 14px;
-            line-height: 1.5;
-        }
-        #header {
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            padding: 32px 20px;
-            text-align: center;
-        }
-        #header h1 { font-size: 28px; margin-bottom: 8px; background: linear-gradient(90deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        #header p { color: #8b949e; font-size: 15px; max-width: 500px; margin: 0 auto; }
-        #stats-bar {
-            display: flex;
-            justify-content: center;
-            gap: 24px;
-            padding: 16px;
-            background: #0d1117;
-            border-bottom: 1px solid #21262d;
-            flex-wrap: wrap;
-        }
-        .stat { text-align: center; min-width: 80px; }
-        .stat-num { font-size: 22px; font-weight: 700; color: #3fb950; font-family: 'SF Mono', monospace; }
-        .stat-num.warn { color: #d29922; }
-        .stat-num.danger { color: #f85149; }
-        .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
-        #nav {
-            display: flex;
-            justify-content: center;
-            gap: 12px;
-            padding: 20px;
-            flex-wrap: wrap;
-        }
-        .nav-btn {
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 12px 24px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-size: 14px;
-            transition: all 0.2s;
-        }
-        .nav-btn:hover { background: #30363d; border-color: #58a6ff; }
-        .nav-btn.primary { background: #238636; border-color: #238636; color: white; }
-        .nav-btn.primary:hover { background: #2ea043; }
-        #main {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 24px 20px;
-        }
-        .card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 20px;
-        }
-        .card h2 {
-            font-size: 16px;
-            margin-bottom: 16px;
-            color: #f0f6fc;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .endpoints { display: grid; gap: 8px; }
-        .endpoint {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 12px;
-            background: #0d1117;
-            border-radius: 6px;
-            font-family: 'SF Mono', monospace;
-            font-size: 13px;
-        }
-        .method {
-            background: #238636;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-            min-width: 50px;
-            text-align: center;
-        }
-        .method.ws { background: #bc8cff; }
-        .method.get { background: #58a6ff; }
-        .path { color: #c9d1d9; }
-        .desc { color: #8b949e; margin-left: auto; font-size: 12px; font-family: inherit; }
-        #inference-box { display: flex; gap: 8px; margin-top: 12px; }
-        #inference-box textarea {
-            flex: 1;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 12px;
-            border-radius: 6px;
-            font-family: inherit;
-            font-size: 14px;
-            min-height: 80px;
-            resize: vertical;
-        }
-        #inference-box button {
-            background: #238636;
-            border: none;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-        #inference-box button.stream {
-            background: #58a6ff;
-        }
-        #inf-result {
-            margin-top: 16px;
-            background: #0d1117;
-            border: 1px solid #21262d;
-            border-radius: 6px;
-            padding: 16px;
-            font-family: 'SF Mono', monospace;
-            font-size: 13px;
-            white-space: pre-wrap;
-            display: none;
-            line-height: 1.6;
-            min-height: 60px;
-        }
-        .footer { text-align: center; padding: 32px; color: #484f58; font-size: 12px; }
-        .footer a { color: #58a6ff; text-decoration: none; }
-        .queue-badge {
-            display: inline-block;
-            background: #da3633;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-left: 8px;
-        }
-        .queue-badge.ok { background: #238636; }
-        .queue-badge.warn { background: #d29922; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Termux Pool v2.4</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: #0d1117; color: #c9d1d9; line-height: 1.6;
+  }
+  header {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center;
+  }
+  header h1 { color: #58a6ff; font-size: 1.4rem; }
+  .badge {
+    background: #238636; color: #fff; padding: 0.2rem 0.6rem; border-radius: 12px;
+    font-size: 0.75rem; font-weight: 600;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1.5rem;
+  }
+  .card h3 { color: #58a6ff; margin-bottom: 0.75rem; font-size: 1rem; }
+  .stat { font-size: 2rem; font-weight: 700; color: #3fb950; }
+  .stat-label { font-size: 0.85rem; color: #8b949e; }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+  th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #30363d; font-size: 0.85rem; }
+  th { color: #8b949e; font-weight: 500; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .online { background: #3fb950; }
+  .offline { background: #f85149; }
+  .btn {
+    display: inline-block; padding: 0.5rem 1rem; background: #1f6feb; color: #fff;
+    text-decoration: none; border-radius: 6px; font-size: 0.85rem; border: none; cursor: pointer;
+  }
+  .btn:hover { background: #388bfd; }
+  .btn-secondary { background: #21262d; border: 1px solid #30363d; }
+  .btn-secondary:hover { background: #30363d; }
+  .actions { margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  pre {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 1rem; overflow-x: auto; font-size: 0.8rem; color: #a5d6ff;
+  }
+  .hidden { display: none; }
+  #owner-panel { margin-top: 1rem; }
+</style>
 </head>
 <body>
-    <div id="header">
-        <h1>🌐 Termux Compute Pool</h1>
-        <p>Distributed inference network powered by donated CPU & GPU cycles. Open to all. Owned by none.</p>
+<header>
+  <h1>🌊 Termux Compute Pool <span style="color:#8b949e;font-size:0.9rem">v2.4</span></h1>
+  <span class="badge" id="pool-status">● Online</span>
+</header>
+
+<div class="container">
+  <div class="grid">
+    <div class="card">
+      <h3>Workers Online</h3>
+      <div class="stat" id="worker-count">0</div>
+      <div class="stat-label">Active compute nodes</div>
     </div>
-    <div id="stats-bar">
-        <div class="stat"><div class="stat-num" id="stat-workers">0</div><div class="stat-label">Active Donors</div></div>
-        <div class="stat"><div class="stat-num" id="stat-python">0</div><div class="stat-label">Python</div></div>
-        <div class="stat"><div class="stat-num" id="stat-ghost">0</div><div class="stat-label">Browser</div></div>
-        <div class="stat"><div class="stat-num" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
-        <div class="stat"><div class="stat-num" id="stat-mem">-</div><div class="stat-label">Memory</div></div>
-        <div class="stat"><div class="stat-num" id="stat-load">-</div><div class="stat-label">Load</div></div>
+    <div class="card">
+      <h3>Queue Depth</h3>
+      <div class="stat" id="queue-depth">0</div>
+      <div class="stat-label">Pending inference jobs</div>
     </div>
-    <div id="nav">
-        <a href="/terminal" class="nav-btn" target="_blank">💻 Terminal</a>
-        <a href="/files" class="nav-btn" target="_blank">📁 Files</a>
-        <a href="/static/ghost_worker.html" class="nav-btn" target="_blank">👻 Browser Worker</a>
-        <a href="#" class="nav-btn primary" onclick="downloadWorker()">⬇ Download Worker</a>
+    <div class="card">
+      <h3>Jobs Completed</h3>
+      <div class="stat" id="jobs-completed">0</div>
+      <div class="stat-label">Total successful inferences</div>
     </div>
-    <div id="main">
-        <div class="card">
-            <h2>🧠 Inference Playground <span class="queue-badge ok" id="queue-badge">LIVE</span></h2>
-            <p style="color:#8b949e; margin-bottom:12px; font-size:13px;">Submit a prompt. It will be routed to the best available donor node.</p>
-            <div id="inference-box">
-                <textarea id="promptInput" placeholder="Explain quantum entanglement in simple terms..."></textarea>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <button onclick="runInference()">Run (Batch)</button>
-                    <button class="stream" onclick="runStream()">Run (Stream)</button>
-                </div>
-            </div>
-            <pre id="inf-result"></pre>
-        </div>
+  </div>
 
-        <div class="card">
-            <h2>🔌 Pool API</h2>
-            <div class="endpoints">
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/health</span><span class="desc">Pool health + queue stats</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/inference</span><span class="desc">Submit inference job (batch)</span></div>
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/inference/stream?prompt=...</span><span class="desc">Submit inference job (SSE stream)</span></div>
-                <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/worker</span><span class="desc">Connect as compute donor</span></div>
-                <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/terminal</span><span class="desc">Pool node terminal</span></div>
-            </div>
-        </div>
+  <div class="card" style="margin-top:1.5rem">
+    <h3>🔌 Connected Workers</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Backend</th><th>Models</th><th>Status</th><th>Job</th></tr></thead>
+      <tbody id="worker-table"><tr><td colspan="5" style="color:#8b949e">No workers connected</td></tr></tbody>
+    </table>
+    <div class="actions">
+      <a class="btn" href="/terminal">🖥 Terminal</a>
+      <a class="btn btn-secondary" href="/files">📁 Files</a>
+      <a class="btn btn-secondary" href="/ghost">👻 Ghost Worker</a>
     </div>
-    <div class="footer">
-        Termux Compute Pool v2.4 — <a href="/pool">Join the Pool</a> — <a href="https://github.com/bekingdomcomejoker-cpu/termux-server" target="_blank">GitHub</a>
+  </div>
+
+  <div class="card" id="owner-panel" style="margin-top:1.5rem">
+    <h3>🛡 Owner Panel</h3>
+    <p style="font-size:0.85rem;color:#8b949e;margin-bottom:0.75rem">
+      Enter your OWNER_SECRET to unlock root access. No login page — stealth auth.
+    </p>
+    <input type="password" id="secret-input" placeholder="OWNER_SECRET" style="padding:0.5rem;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;width:300px">
+    <button class="btn" onclick="authenticate()" style="margin-left:0.5rem">Unlock</button>
+    <div id="auth-result" style="margin-top:0.5rem;font-size:0.85rem"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <h3>🚀 Quick Inference Test</h3>
+    <textarea id="inference-prompt" rows="3" placeholder="Enter a prompt..." style="width:100%;padding:0.75rem;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;resize:vertical;margin-top:0.5rem"></textarea>
+    <div class="actions">
+      <button class="btn" onclick="runInference()">Run Inference</button>
+      <select id="model-select" style="padding:0.5rem;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:6px">
+        <option value="default">default</option>
+        <option value="duckai-gpt4o">duckai-gpt4o</option>
+        <option value="duckai-claude-3-haiku">duckai-claude-3-haiku</option>
+      </select>
     </div>
+    <pre id="inference-result" class="hidden" style="margin-top:1rem"></pre>
+  </div>
 
-    <script>
-        const base = window.location.protocol + '//' + window.location.host;
+  <div class="card" style="margin-top:1.5rem">
+    <h3>📜 Recent Jobs</h3>
+    <table>
+      <thead><tr><th>ID</th><th>Model</th><th>Status</th><th>Worker</th><th>Time</th></tr></thead>
+      <tbody id="jobs-table"><tr><td colspan="5" style="color:#8b949e">No jobs yet</td></tr></tbody>
+    </table>
+  </div>
+</div>
 
-        async function loadStats() {
-            try {
-                const res = await fetch(base + '/health');
-                const data = await res.json();
-                document.getElementById('stat-workers').textContent = data.workers || 0;
-                document.getElementById('stat-python').textContent = data.python_workers || 0;
-                document.getElementById('stat-ghost').textContent = data.ghost_workers || 0;
-                document.getElementById('stat-pending').textContent = (data.queue && data.queue.pending) || 0;
+<script>
+async function fetchPool() {
+  try {
+    const r = await fetch("/pool");
+    const d = await r.json();
+    document.getElementById("worker-count").textContent = d.workers_online || 0;
+    document.getElementById("queue-depth").textContent = d.queue_depth || 0;
+    document.getElementById("jobs-completed").textContent = (d.queue_stats && d.queue_stats.completed) || 0;
 
-                const badge = document.getElementById('queue-badge');
-                if (data.queue && data.queue.pending > 10) {
-                    badge.textContent = 'BUSY';
-                    badge.className = 'queue-badge danger';
-                } else if (data.queue && data.queue.pending > 0) {
-                    badge.textContent = 'ACTIVE';
-                    badge.className = 'queue-badge warn';
-                } else {
-                    badge.textContent = 'LIVE';
-                    badge.className = 'queue-badge ok';
-                }
+    const tbody = document.getElementById("worker-table");
+    if (d.workers && d.workers.length) {
+      tbody.innerHTML = d.workers.map(w => `
+        <tr>
+          <td>${w.id}</td>
+          <td>${w.capabilities.backend || "unknown"}</td>
+          <td>${(w.capabilities.models || []).join(", ")}</td>
+          <td><span class="status-dot online"></span>Online</td>
+          <td>${w.current_job || "idle"}</td>
+        </tr>
+      `).join("");
+    } else {
+      tbody.innerHTML = `<tr><td colspan="5" style="color:#8b949e">No workers connected</td></tr>`;
+    }
+  } catch (e) { console.error(e); }
+}
 
-                if (data.memory) document.getElementById('stat-mem').textContent = data.memory.percent + '%';
-                const info = await fetch(base + '/info').then(r => r.json());
-                if (info.load_avg) document.getElementById('stat-load').textContent = info.load_avg[0].toFixed(2);
-            } catch(e) {}
-        }
+async function fetchJobs() {
+  try {
+    const r = await fetch("/inference/jobs?limit=20");
+    const d = await r.json();
+    const tbody = document.getElementById("jobs-table");
+    if (d.jobs && d.jobs.length) {
+      tbody.innerHTML = d.jobs.map(j => `
+        <tr>
+          <td>${j.id}</td>
+          <td>${j.model}</td>
+          <td>${j.status}</td>
+          <td>${j.worker_id || "—"}</td>
+          <td>${j.created_at ? new Date(j.created_at * 1000).toLocaleTimeString() : "—"}</td>
+        </tr>
+      `).join("");
+    }
+  } catch (e) { console.error(e); }
+}
 
-        async function runInference() {
-            const prompt = document.getElementById('promptInput').value;
-            const out = document.getElementById('inf-result');
-            if (!prompt.trim()) return;
-            out.style.display = 'block';
-            out.textContent = 'Queued. Waiting for donor node...';
-            try {
-                const res = await fetch(base + '/inference', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({prompt: prompt, prefer_gpu: true})
-                });
-                const data = await res.json();
-                out.textContent = `[${data.status.toUpperCase()}]\n\n${data.result || ''}`;
-            } catch (e) {
-                out.textContent = 'Error: ' + e.message;
-            }
-        }
+async function authenticate() {
+  const secret = document.getElementById("secret-input").value;
+  try {
+    const r = await fetch(`/pool?join=${encodeURIComponent(secret)}`);
+    const d = await r.json();
+    const res = document.getElementById("auth-result");
+    if (d.status === "owner_authenticated") {
+      res.innerHTML = `<span style="color:#3fb950">✓ Owner mode unlocked. Token TTL: ${d.ttl}s</span>`;
+      setTimeout(() => window.location.href = "/terminal", 800);
+    } else {
+      res.innerHTML = `<span style="color:#f85149">✗ Invalid secret</span>`;
+    }
+  } catch (e) {
+    document.getElementById("auth-result").innerHTML = `<span style="color:#f85149">Error: ${e}</span>`;
+  }
+}
 
-        function runStream() {
-            const prompt = document.getElementById('promptInput').value;
-            const out = document.getElementById('inf-result');
-            if (!prompt.trim()) return;
-            out.style.display = 'block';
-            out.textContent = '';
+async function runInference() {
+  const prompt = document.getElementById("inference-prompt").value;
+  const model = document.getElementById("model-select").value;
+  const resultEl = document.getElementById("inference-result");
+  resultEl.classList.remove("hidden");
+  resultEl.textContent = "Running inference...";
+  try {
+    const r = await fetch("/inference", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({prompt, model})
+    });
+    const d = await r.json();
+    resultEl.textContent = d.response || d.error || JSON.stringify(d, null, 2);
+  } catch (e) {
+    resultEl.textContent = "Error: " + e;
+  }
+  fetchJobs();
+}
 
-            const es = new EventSource(base + '/inference/stream?prompt=' + encodeURIComponent(prompt));
-            let buffer = '';
-
-            es.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.token) {
-                        buffer += data.token;
-                        out.textContent = buffer;
-                    } else if (data.status === 'complete') {
-                        out.textContent = buffer + '\n\n[Complete]';
-                        es.close();
-                    } else if (data.status === 'error' || data.status === 'timeout') {
-                        out.textContent = buffer + '\n\n[' + data.status.toUpperCase() + ': ' + (data.result || '') + ']';
-                        es.close();
-                    }
-                } catch (e) {
-                    out.textContent += event.data;
-                }
-            };
-
-            es.onerror = () => {
-                out.textContent += '\n[Stream error]';
-                es.close();
-            };
-        }
-
-        function downloadWorker() {
-            const wsBase = base.replace(/^http/, 'ws');
-            const code = `#!/usr/bin/env python3\n# Termux Compute Pool Worker v2.4\nimport os, json, websocket, time\nSERVER = os.environ.get("POOL_SERVER", "${wsBase}/ws/worker")\ndef on_message(ws, msg):\n    data = json.loads(msg)\n    if data.get("type") == "inference":\n        result = f"[Echo from {os.uname().nodename}] {data['prompt'][:200]}"\n        ws.send(json.dumps({"type": "inference_result", "job_id": data["job_id"], "result": result}))\ndef on_open(ws): print("[Worker] Connected")\ndef on_close(ws, c, m): time.sleep(5); start()\ndef start():\n    ws = websocket.WebSocketApp(SERVER, on_open=on_open, on_message=on_message, on_close=on_close)\n    ws.run_forever()\nif __name__ == "__main__": start()\n`;
-            const blob = new Blob([code], {type: 'text/x-python'});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'worker_node.py';
-            a.click();
-        }
-
-        loadStats();
-        setInterval(loadStats, 5000);
-    </script>
+fetchPool();
+fetchJobs();
+setInterval(fetchPool, 5000);
+setInterval(fetchJobs, 10000);
+</script>
 </body>
 </html>

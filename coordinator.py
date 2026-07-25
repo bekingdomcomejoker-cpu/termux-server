@@ -1,84 +1,167 @@
 #!/usr/bin/env python3
 """
-Minimal Termux Server Coordinator
-Talks to two (or more) Termux Server instances.
+coordinator.py
+Standalone coordinator for multi-instance Termux Server pools.
+Can also be imported and used inside api_server.py.
 """
 
-import requests
+import asyncio
 import json
-from typing import List, Dict, Any, Optional
+import logging
+import time
+from typing import Dict, Optional
+from dataclasses import dataclass, field
 
-# ── Configure your instances here ──────────────────────────────
-INSTANCES = {
-    "original": "https://8000-inkred4fbxunhjm0lr6kx-74e78eb2.us2.manus.computer",
-    "second":   "https://8000-i0nugvn3w77z3rlgv7bzk-5ae40618.us1.manus.computer",
-    "node3":    "https://8000-ixqkbx2bgwgtz99ekulpg-13d18888.us1.manus.computer",
-    "node4":    "https://8000-i7rvsrp7v7fxkzoijqq0l-58bdd40e.us1.manus.computer",
-}
+import websockets
+from websockets.server import WebSocketServerProtocol
 
-# Optional API key (leave None if you didn't set TERMUX_API_KEY)
-API_KEY = None
-# ───────────────────────────────────────────────────────────────
-
-HEADERS = {"Content-Type": "application/json"}
-if API_KEY:
-    HEADERS["X-API-Key"] = API_KEY
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("coordinator")
 
 
-def call(instance: str, method: str, path: str, **kwargs) -> Dict[str, Any]:
-    """Call a single instance."""
-    base = INSTANCES[instance].rstrip("/")
-    url = f"{base}{path}"
-    try:
-        if method.upper() == "GET":
-            r = requests.get(url, headers=HEADERS, timeout=30, **kwargs)
-        elif method.upper() == "POST":
-            r = requests.post(url, headers=HEADERS, timeout=30, **kwargs)
-        elif method.upper() == "DELETE":
-            r = requests.delete(url, headers=HEADERS, timeout=30, **kwargs)
-        else:
-            return {"success": False, "error": f"Unsupported method {method}"}
-        r.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-        return r.json()
-    except requests.exceptions.RequestException as e:
-        return {"success": False, "error": str(e)}
+@dataclass
+class Worker:
+    ws: WebSocketServerProtocol
+    worker_id: str
+    capabilities: dict
+    last_ping: float
+    current_job: Optional[str] = None
 
 
-def execute(command: str, targets: Optional[List[str]] = None, timeout: int = 30) -> Dict[str, Any]:
-    """
-    Run a command on one or more instances.
-    targets = None  → all instances
-    targets = ["second"] → only that one
-    """
-    if targets is None:
-        targets = list(INSTANCES.keys())
-
-    results = {}
-    for name in targets:
-        results[name] = call(name, "POST", "/execute",
-                             json={"command": command, "timeout": timeout})
-    return results
+@dataclass
+class Job:
+    job_id: str
+    prompt: str
+    model: str
+    status: str = "queued"
+    response: Optional[str] = None
+    worker_id: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
+    completed_at: Optional[float] = None
 
 
-def health(targets: Optional[List[str]] = None) -> Dict[str, Any]:
-    if targets is None:
-        targets = list(INSTANCES.keys())
-    return {name: call(name, "GET", "/health") for name in targets}
+class Coordinator:
+    def __init__(self, host: str = "0.0.0.0", port: int = 8001):
+        self.host = host
+        self.port = port
+        self.workers: Dict[str, Worker] = {}
+        self.jobs: Dict[str, Job] = {}
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.pending_futures: Dict[str, asyncio.Future] = {}
+
+    async def register_worker(self, ws: WebSocketServerProtocol, data: dict):
+        worker_id = data.get("worker_id", f"anon-{id(ws)}")
+        caps = data.get("capabilities", {})
+        self.workers[worker_id] = Worker(ws, worker_id, caps, time.time())
+        logger.info(f"Worker registered: {worker_id} — {caps.get('models', [])}")
+        await ws.send(json.dumps({"type": "registered", "worker_id": worker_id}))
+
+    async def unregister_worker(self, worker_id: str):
+        if worker_id in self.workers:
+            del self.workers[worker_id]
+            logger.info(f"Worker unregistered: {worker_id}")
+
+    async def submit_job(self, prompt: str, model: str = "default") -> str:
+        import secrets
+        job_id = secrets.token_hex(8)
+        job = Job(job_id=job_id, prompt=prompt, model=model)
+        self.jobs[job_id] = job
+        future = asyncio.get_event_loop().create_future()
+        self.pending_futures[job_id] = future
+        await self.queue.put(job_id)
+        logger.info(f"Job {job_id} queued")
+        return job_id, future
+
+    async def route_jobs(self):
+        while True:
+            job_id = await self.queue.get()
+            job = self.jobs.get(job_id)
+            if not job:
+                continue
+
+            capable = [
+                w for w in self.workers.values()
+                if w.current_job is None
+                and any(m in w.capabilities.get("models", []) for m in [job.model, "default"])
+            ]
+
+            if not capable:
+                await asyncio.sleep(2)
+                await self.queue.put(job_id)
+                continue
+
+            worker = capable[0]
+            worker.current_job = job_id
+            job.status = "assigned"
+            job.worker_id = worker.worker_id
+
+            try:
+                await worker.ws.send(json.dumps({
+                    "type": "inference_request",
+                    "job_id": job_id,
+                    "prompt": job.prompt,
+                    "model": job.model
+                }))
+            except Exception as e:
+                logger.error(f"Failed to route job {job_id} to {worker.worker_id}: {e}")
+                worker.current_job = None
+                await self.queue.put(job_id)
+
+    async def handle_worker(self, ws: WebSocketServerProtocol, path: str):
+        worker_id = None
+        try:
+            async for message in ws:
+                data = json.loads(message)
+                msg_type = data.get("type")
+
+                if msg_type == "register":
+                    worker_id = data.get("worker_id")
+                    await self.register_worker(ws, data)
+
+                elif msg_type == "pong":
+                    wid = data.get("worker_id")
+                    if wid in self.workers:
+                        self.workers[wid].last_ping = time.time()
+
+                elif msg_type == "inference_response":
+                    wid = data.get("worker_id")
+                    jid = data.get("job_id")
+                    if jid in self.pending_futures:
+                        self.pending_futures[jid].set_result(data.get("response"))
+                        del self.pending_futures[jid]
+                    if wid in self.workers:
+                        self.workers[wid].current_job = None
+                    if jid in self.jobs:
+                        self.jobs[jid].status = "completed"
+                        self.jobs[jid].response = data.get("response")
+                        self.jobs[jid].completed_at = time.time()
+
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            if worker_id:
+                await self.unregister_worker(worker_id)
+
+    async def cleanup_stale(self):
+        while True:
+            await asyncio.sleep(30)
+            now = time.time()
+            stale = [wid for wid, w in self.workers.items() if now - w.last_ping > 60]
+            for wid in stale:
+                logger.info(f"Removing stale worker {wid}")
+                await self.unregister_worker(wid)
+
+    async def start(self):
+        logger.info(f"Coordinator starting on ws://{self.host}:{self.port}")
+        asyncio.create_task(self.route_jobs())
+        asyncio.create_task(self.cleanup_stale())
+        async with websockets.serve(self.handle_worker, self.host, self.port):
+            await asyncio.Future()
 
 
-def info(targets: Optional[List[str]] = None) -> Dict[str, Any]:
-    if targets is None:
-        targets = list(INSTANCES.keys())
-    return {name: call(name, "GET", "/info") for name in targets}
-
-
-# ── Example usage ──────────────────────────────────────────────
 if __name__ == "__main__":
-    print("=== Health check (all nodes) ===")
-    print(json.dumps(health(), indent=2))
-
-    print("\n=== Run command on all nodes ===")
-    print(json.dumps(execute("whoami && hostname && uptime"), indent=2))
-
-    print("\n=== Run only on the second instance ===")
-    print(json.dumps(execute("df -h | head -5", targets=["second"]), indent=2))
+    import os
+    host = os.environ.get("COORDINATOR_HOST", "0.0.0.0")
+    port = int(os.environ.get("COORDINATOR_PORT", "8001"))
+    c = Coordinator(host=host, port=port)
+    asyncio.run(c.start())

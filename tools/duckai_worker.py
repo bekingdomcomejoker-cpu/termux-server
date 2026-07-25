@@ -1,70 +1,68 @@
 #!/usr/bin/env python3
 """
-worker_node.py
-Generic compute worker for the Termux Server pool.
-Can run shell commands, local scripts, or delegate to browser automation.
+duckai_worker.py
+Duck.ai inference worker for the Termux Server compute pool.
+Registers with the coordinator and handles inference jobs via browser automation.
 """
 
 import asyncio
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 from typing import Optional
 
 import websockets
 
+sys.path.insert(0, os.path.dirname(__file__))
+from unified_ai_bot import DuckAIBot, BotConfig
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("worker_node")
+logger = logging.getLogger("duckai_worker")
 
 COORDINATOR_URL = os.environ.get("COORDINATOR_URL", "ws://localhost:8000/ws/worker")
-WORKER_ID = os.environ.get("WORKER_ID", f"node-{os.getpid()}")
+WORKER_ID = os.environ.get("WORKER_ID", f"duckai-{os.getpid()}")
 API_KEY = os.environ.get("WORKER_API_KEY", "")
 
 
-def get_hardware_info() -> dict:
-    info = {"platform": "termux" if "TERMUX_VERSION" in os.environ else "linux"}
-    try:
-        result = subprocess.run(["nproc"], capture_output=True, text=True)
-        info["cores"] = int(result.stdout.strip())
-    except Exception:
-        info["cores"] = os.cpu_count() or 1
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    info["ram_kb"] = int(line.split()[1])
-                    break
-    except Exception:
-        pass
-    return info
-
-
-class GenericWorker:
+class DuckAIWorker:
     def __init__(self):
+        self.bot: Optional[DuckAIBot] = None
         self.ws = None
-        self.hardware = get_hardware_info()
+        self.config = BotConfig(
+            headless=True,
+            stealth=True,
+            screenshot_on_fail=True,
+            chromedriver_path=os.environ.get("CHROMEDRIVER_PATH"),
+            binary_location=os.environ.get("CHROME_BINARY"),
+            user_data_dir=os.environ.get("CHROME_USER_DATA_DIR"),
+        )
 
     async def connect(self):
         headers = {}
         if API_KEY:
             headers["X-API-Key"] = API_KEY
+
+        logger.info(f"Connecting to {COORDINATOR_URL} ...")
         self.ws = await websockets.connect(COORDINATOR_URL, extra_headers=headers)
-        logger.info(f"Connected to coordinator")
+        logger.info("Connected to coordinator")
 
         await self.ws.send(json.dumps({
             "type": "register",
             "worker_id": WORKER_ID,
             "capabilities": {
-                "models": ["local-shell", "default"],
-                "max_concurrent": self.hardware.get("cores", 1),
+                "models": ["duckai-gpt4o", "duckai-claude-3-haiku", "duckai-llama-3.1"],
+                "max_concurrent": 1,
                 "supports_streaming": False,
-                "backend": "shell",
-                "type": "compute_node"
+                "backend": "duck.ai",
+                "stealth": True,
+                "type": "browser_automation"
             },
-            "hardware": self.hardware
+            "hardware": {
+                "platform": "termux" if "TERMUX_VERSION" in os.environ else "linux",
+                "chrome_available": True
+            }
         }))
 
     async def run(self):
@@ -85,54 +83,50 @@ class GenericWorker:
                     }))
 
                 elif msg_type == "inference_request":
-                    asyncio.create_task(self.handle_job(data))
+                    asyncio.create_task(self.handle_inference(data))
 
                 elif msg_type == "shutdown":
+                    logger.info("Shutdown requested by coordinator")
                     break
 
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Connection closed")
+        except Exception as e:
+            logger.error(f"Worker error: {e}")
         finally:
+            if self.bot:
+                self.bot.stop()
             logger.info("Worker stopped")
 
-    async def handle_job(self, data: dict):
+    async def handle_inference(self, data: dict):
         job_id = data["job_id"]
         prompt = data["prompt"]
-        logger.info(f"Job {job_id}: executing shell task")
+        model = data.get("model", "duckai-gpt4o")
 
-        allowed = ["echo", "cat", "ls", "pwd", "uname", "date", "python3", "node"]
-        cmd = prompt.strip()
-        first_word = cmd.split()[0] if cmd.split() else ""
+        logger.info(f"Job {job_id}: processing ({len(prompt)} chars)")
 
-        if first_word not in allowed and not cmd.startswith("python3 -c"):
-            await self.ws.send(json.dumps({
-                "type": "inference_response",
-                "job_id": job_id,
-                "worker_id": WORKER_ID,
-                "status": "error",
-                "error": f"Command '{first_word}' not in allowed list"
-            }))
-            return
+        if not self.bot:
+            self.bot = DuckAIBot(self.config)
 
         try:
             loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-                ),
-                timeout=35
+            response = await asyncio.wait_for(
+                loop.run_in_executor(None, self.bot.send_message, prompt),
+                timeout=120
             )
-            output = result.stdout or result.stderr or "(no output)"
+
             await self.ws.send(json.dumps({
                 "type": "inference_response",
                 "job_id": job_id,
                 "worker_id": WORKER_ID,
                 "status": "success",
-                "response": output,
-                "returncode": result.returncode
+                "response": response,
+                "model": model
             }))
+            logger.info(f"Job {job_id}: success")
+
         except Exception as e:
+            logger.error(f"Job {job_id} failed: {e}")
             await self.ws.send(json.dumps({
                 "type": "inference_response",
                 "job_id": job_id,
@@ -140,13 +134,17 @@ class GenericWorker:
                 "status": "error",
                 "error": str(e)
             }))
+            if self.bot:
+                self.bot.stop()
+                self.bot = None
 
 
 if __name__ == "__main__":
-    worker = GenericWorker()
+    worker = DuckAIWorker()
     while True:
         try:
             asyncio.run(worker.run())
         except Exception as e:
             logger.error(f"Worker crashed: {e}")
+            logger.info("Restarting in 10s...")
             time.sleep(10)

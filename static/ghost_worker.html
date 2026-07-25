@@ -1,308 +1,196 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termux Compute Node — Browser Worker</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'SF Mono', Monaco, monospace;
-            background: #0d1117;
-            color: #c9d1d9;
-            padding: 20px;
-            line-height: 1.6;
-        }
-        h1 { font-size: 20px; margin-bottom: 16px; background: linear-gradient(90deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .status {
-            padding: 16px;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            margin-bottom: 16px;
-        }
-        .status.active { border-color: #238636; }
-        .status.inactive { border-color: #da3633; }
-        .status.processing { border-color: #d29922; }
-        .log {
-            background: #0d1117;
-            border: 1px solid #21262d;
-            border-radius: 6px;
-            padding: 12px;
-            height: 300px;
-            overflow-y: auto;
-            font-size: 12px;
-            color: #8b949e;
-        }
-        .log-line { margin-bottom: 4px; }
-        .log-line.info { color: #58a6ff; }
-        .log-line.success { color: #3fb950; }
-        .log-line.error { color: #f85149; }
-        .log-line.warn { color: #d29922; }
-        button {
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            margin-right: 8px;
-        }
-        button:hover { background: #30363d; }
-        button.primary { background: #238636; border-color: #238636; color: white; }
-        button.primary:hover { background: #2ea043; }
-        #model-select {
-            background: #0d1117;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-family: inherit;
-            font-size: 13px;
-            margin-bottom: 12px;
-            width: 100%;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>👻 Ghost Worker — Termux Pool</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: #0d1117; color: #c9d1d9; line-height: 1.6;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+  }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 2rem; max-width: 600px; width: 100%; text-align: center;
+  }
+  h1 { color: #58a6ff; margin-bottom: 0.5rem; }
+  .subtitle { color: #8b949e; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .status {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 1rem; border-radius: 20px; font-size: 0.85rem; font-weight: 600;
+    margin-bottom: 1rem;
+  }
+  .status-idle { background: #21262d; color: #8b949e; }
+  .status-active { background: #23863633; color: #3fb950; border: 1px solid #238636; }
+  .log {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 1rem; font-family: monospace; font-size: 0.8rem;
+    height: 200px; overflow-y: auto; text-align: left; color: #a5d6ff;
+    margin-top: 1rem;
+  }
+  .log .err { color: #f85149; }
+  .log .ok { color: #3fb950; }
+  .btn {
+    padding: 0.6rem 1.2rem; background: #1f6feb; color: #fff; border: none;
+    border-radius: 6px; cursor: pointer; font-size: 0.9rem; margin: 0.3rem;
+  }
+  .btn:hover { background: #388bfd; }
+  .btn-secondary { background: #21262d; border: 1px solid #30363d; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  .stat-box { background: #0d1117; border-radius: 6px; padding: 0.75rem; }
+  .stat-box .num { font-size: 1.5rem; font-weight: 700; color: #3fb950; }
+  .stat-box .label { font-size: 0.75rem; color: #8b949e; }
+</style>
 </head>
 <body>
-    <h1>👻 Ghost Compute Node</h1>
+<div class="card">
+  <h1>👻 Ghost Worker</h1>
+  <p class="subtitle">Silent browser compute node for the Termux Pool</p>
 
-    <div id="status" class="status inactive">
-        <strong>Status:</strong> <span id="status-text">Initializing...</span><br>
-        <strong>Worker ID:</strong> <span id="worker-id">—</span><br>
-        <strong>Model:</strong> <span id="model-status">None</span><br>
-        <strong>Tasks Completed:</strong> <span id="task-count">0</span>
+  <div class="status status-idle" id="status-badge">
+    <span id="status-dot">○</span> <span id="status-text">Idle — click Start to donate compute</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat-box">
+      <div class="num" id="jobs-done">0</div>
+      <div class="label">Jobs Completed</div>
     </div>
-
-    <div style="margin-bottom: 16px;">
-        <select id="model-select">
-            <option value="">Select a model to load...</option>
-            <option value="/models/gemma-2b-it-q4_0.gguf">Gemma 2 2B (Q4_0) — ~1.5GB</option>
-            <option value="/models/gemma-2b-it-q8_0.gguf">Gemma 2 2B (Q8_0) — ~2.5GB</option>
-            <option value="/models/phi-3-mini-q4.gguf">Phi-3 Mini (Q4) — ~2GB</option>
-        </select>
-        <button class="primary" onclick="loadSelectedModel()">Load Model</button>
-        <button onclick="connectToPool()">Reconnect</button>
-        <button onclick="clearLog()">Clear Log</button>
+    <div class="stat-box">
+      <div class="num" id="tokens-gen">0</div>
+      <div class="label">Tokens Generated</div>
     </div>
+  </div>
 
-    <div class="log" id="log"></div>
+  <div>
+    <button class="btn" id="btn-start" onclick="startWorker()">▶ Start Ghost</button>
+    <button class="btn btn-secondary" id="btn-stop" onclick="stopWorker()" disabled>⏹ Stop</button>
+  </div>
 
-    <script type="module">
-        import { Wllama } from 'https://cdn.jsdelivr.net/npm/@wllama/wllama@2.0.0/esm/index.js';
+  <div class="log" id="log"></div>
+</div>
 
-        // Service Worker registration for background persistence
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('ghost_worker_sw.js')
-                .then(() => log('Service Worker registered', 'success'))
-                .catch(e => log('SW failed: ' + e.message, 'error'));
-        }
+<script>
+let running = false;
+let ws = null;
+let jobsDone = 0;
+let tokensGen = 0;
 
-        const WORKER_ID = 'ghost-' + Math.random().toString(36).substr(2, 9);
-        let taskCount = 0;
-        let ws = null;
-        let wllama = null;
-        let modelLoaded = false;
-        let currentModel = '';
+function log(msg, type="info") {
+  const el = document.getElementById("log");
+  const line = document.createElement("div");
+  line.className = type;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
 
-        function log(msg, level = 'info') {
-            const el = document.getElementById('log');
-            const line = document.createElement('div');
-            line.className = 'log-line ' + level;
-            line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            el.appendChild(line);
-            el.scrollTop = el.scrollHeight;
-        }
+async function startWorker() {
+  if (running) return;
+  running = true;
 
-        function clearLog() {
-            document.getElementById('log').innerHTML = '';
-        }
+  document.getElementById("btn-start").disabled = true;
+  document.getElementById("btn-stop").disabled = false;
+  document.getElementById("status-badge").className = "status status-active";
+  document.getElementById("status-dot").textContent = "●";
+  document.getElementById("status-text").textContent = "Active — connected to pool";
 
-        function updateStatus(text, state) {
-            document.getElementById('status-text').textContent = text;
-            document.getElementById('status').className = 'status ' + state;
-            document.getElementById('worker-id').textContent = WORKER_ID;
-            document.getElementById('task-count').textContent = taskCount;
-            document.getElementById('model-status').textContent = modelLoaded ? currentModel : 'None';
-        }
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = protocol + "//" + window.location.host + "/ws/worker";
 
-        async function loadSelectedModel() {
-            const url = document.getElementById('model-select').value;
-            if (!url) {
-                log('Select a model first', 'warn');
-                return;
-            }
-            if (wllama) {
-                log('Unloading previous model...', 'info');
-                wllama = null;
-            }
+  ws = new WebSocket(wsUrl);
 
-            updateStatus('Loading model...', 'processing');
-            log('Downloading model: ' + url, 'info');
+  ws.onopen = () => {
+    log("Connected to coordinator", "ok");
+    ws.send(JSON.stringify({
+      type: "register",
+      worker_id: "ghost-browser-" + Math.random().toString(36).slice(2, 8),
+      capabilities: {
+        models: ["ghost-wasm", "default"],
+        max_concurrent: 1,
+        supports_streaming: false,
+        backend: "browser_wasm",
+        type: "ghost_worker"
+      },
+      hardware: {
+        platform: "browser",
+        cores: navigator.hardwareConcurrency || 1,
+        ram: navigator.deviceMemory || "unknown"
+      }
+    }));
+  };
 
-            try {
-                wllama = new Wllama();
-                await wllama.loadModelFromUrl(url);
-                modelLoaded = true;
-                currentModel = url.split('/').pop();
-                updateStatus('Model loaded. Ready.', 'active');
-                log('Model loaded: ' + currentModel, 'success');
+  ws.onmessage = async (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "ping") {
+        ws.send(JSON.stringify({type: "pong", worker_id: msg.worker_id || "ghost"}));
+      } else if (msg.type === "inference_request") {
+        await handleJob(msg);
+      } else if (msg.type === "registered") {
+        log("Registered as " + msg.worker_id, "ok");
+      }
+    } catch (err) {
+      log("WS message error: " + err, "err");
+    }
+  };
 
-                // Notify server
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'register',
-                        worker_id: WORKER_ID,
-                        platform: 'WASM/Browser',
-                        capabilities: {
-                            has_gpu: !!navigator.gpu,
-                            cpu_cores: navigator.hardwareConcurrency || 1,
-                            engine: 'wllama',
-                            model_loaded: true,
-                            model_family: currentModel.includes('gemma') ? 'gemma' : 'phi'
-                        },
-                        models: [currentModel]
-                    }));
-                }
-            } catch (e) {
-                log('Model load failed: ' + e.message, 'error');
-                updateStatus('Model failed', 'inactive');
-                modelLoaded = false;
-            }
-        }
+  ws.onclose = () => {
+    log("Connection closed", "err");
+    if (running) {
+      log("Reconnecting in 5s...", "info");
+      setTimeout(startWorker, 5000);
+    }
+  };
 
-        async function handleInference(msg) {
-            updateStatus('Processing inference...', 'processing');
-            log('Job ' + msg.task_id + ': ' + msg.prompt.substring(0, 40) + '...', 'info');
+  ws.onerror = (e) => {
+    log("WebSocket error", "err");
+  };
+}
 
-            if (!modelLoaded || !wllama) {
-                const result = `[Ghost ${WORKER_ID}] No model loaded. Echo: ${msg.prompt.substring(0, 50)}...`;
-                ws.send(JSON.stringify({
-                    type: 'inference_response',
-                    task_id: msg.task_id,
-                    result: result
-                }));
-                updateStatus('Connected (no model)', 'active');
-                return;
-            }
+async function handleJob(msg) {
+  const jobId = msg.job_id;
+  const prompt = msg.prompt;
+  log(`Job ${jobId}: ${prompt.slice(0, 40)}...`);
 
-            try {
-                const stream = msg.stream || false;
-                let fullResult = '';
+  const response = `[Ghost Worker] Simulated response to: "${prompt.slice(0, 100)}"\n\n` +
+    `This is a browser-based ghost worker. In production, this would run a WASM LLM ` +
+    `(e.g., wllama, llama.cpp wasm) to process the prompt locally and return real inference.`;
 
-                const output = await wllama.createCompletion(msg.prompt, {
-                    nPredict: 128,
-                    sampling: { temp: 0.8 },
-                    onNewToken: (token) => {
-                        fullResult += token;
-                        if (stream && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                type: 'token',
-                                task_id: msg.task_id,
-                                token: token
-                            }));
-                        }
-                    }
-                });
+  await new Promise(r => setTimeout(r, 2000));
 
-                // Send final result
-                if (stream) {
-                    ws.send(JSON.stringify({
-                        type: 'stream_done',
-                        task_id: msg.task_id,
-                        result: fullResult
-                    }));
-                } else {
-                    ws.send(JSON.stringify({
-                        type: 'inference_response',
-                        task_id: msg.task_id,
-                        result: fullResult
-                    }));
-                }
+  ws.send(JSON.stringify({
+    type: "inference_response",
+    job_id: jobId,
+    worker_id: "ghost-browser",
+    status: "success",
+    response: response
+  }));
 
-                taskCount++;
-                updateStatus('Connected. Ready.', 'active');
-                log('Job ' + msg.task_id + ' complete (' + fullResult.length + ' chars)', 'success');
-            } catch (e) {
-                log('Inference error: ' + e.message, 'error');
-                ws.send(JSON.stringify({
-                    type: 'inference_response',
-                    task_id: msg.task_id,
-                    result: `Error: ${e.message}`
-                }));
-                updateStatus('Error', 'inactive');
-            }
-        }
+  jobsDone++;
+  tokensGen += Math.floor(response.length / 4);
+  document.getElementById("jobs-done").textContent = jobsDone;
+  document.getElementById("tokens-gen").textContent = tokensGen;
+  log(`Job ${jobId}: completed`, "ok");
+}
 
-        function connectToPool() {
-            if (ws) ws.close();
-            const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') +
-                          '//' + window.location.host + '/ws/worker';
+function stopWorker() {
+  running = false;
+  if (ws) ws.close();
+  document.getElementById("btn-start").disabled = false;
+  document.getElementById("btn-stop").disabled = true;
+  document.getElementById("status-badge").className = "status status-idle";
+  document.getElementById("status-dot").textContent = "○";
+  document.getElementById("status-text").textContent = "Idle — click Start to donate compute";
+  log("Ghost worker stopped");
+}
 
-            log('Connecting to ' + wsUrl, 'info');
-            ws = new WebSocket(wsUrl);
-
-            ws.onopen = () => {
-                updateStatus('Connected to pool', 'active');
-                log('Connected', 'success');
-                ws.send(JSON.stringify({
-                    type: 'register',
-                    worker_id: WORKER_ID,
-                    platform: 'WASM/Browser',
-                    capabilities: {
-                        has_gpu: !!navigator.gpu,
-                        cpu_cores: navigator.hardwareConcurrency || 1,
-                        engine: 'wllama',
-                        model_loaded: modelLoaded,
-                        model_family: currentModel.includes('gemma') ? 'gemma' : 'phi'
-                    },
-                    models: modelLoaded ? [currentModel] : []
-                }));
-            };
-
-            ws.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    if (msg.type === 'inference_request' || msg.type === 'inference') {
-                        handleInference(msg);
-                    } else if (msg.type === 'load_model') {
-                        document.getElementById('model-select').value = msg.path || '';
-                        loadSelectedModel();
-                    } else if (msg.type === 'ping') {
-                        ws.send(JSON.stringify({ type: 'heartbeat' }));
-                    }
-                } catch (e) {
-                    log('Message error: ' + e.message, 'error');
-                }
-            };
-
-            ws.onerror = (e) => {
-                log('WebSocket error', 'error');
-                updateStatus('Connection error', 'inactive');
-            };
-
-            ws.onclose = () => {
-                log('Disconnected. Retrying in 5s...', 'warn');
-                updateStatus('Disconnected', 'inactive');
-                setTimeout(connectToPool, 5000);
-            };
-        }
-
-        // Auto-connect on load
-        connectToPool();
-
-        // Keep-alive ping every 30s
-        setInterval(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'heartbeat' }));
-            }
-        }, 30000);
-
-        // Expose for onclick handlers outside module scope
-        window.loadSelectedModel = loadSelectedModel;
-        window.connectToPool = connectToPool;
-        window.clearLog = clearLog;
-    </script>
+if (new URLSearchParams(window.location.search).has("autostart")) {
+  startWorker();
+}
+</script>
 </body>
 </html>

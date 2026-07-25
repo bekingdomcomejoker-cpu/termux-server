@@ -1,76 +1,43 @@
-// Ghost Worker Service Worker v2.4
-// Keeps the compute node alive in the background, handles push notifications
+// ghost_worker_sw.js
+// Service Worker for background ghost worker persistence.
 
-const CACHE_NAME = 'ghost-worker-v2.4';
+const CACHE_NAME = "ghost-worker-v1";
+const urlsToCache = ["/ghost", "/static/ghost_worker.html"];
 
-self.addEventListener('install', (event) => {
-    console.log('[Ghost SW] Installed');
-    self.skipWaiting();
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(urlsToCache))
+  );
+  self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
-    console.log('[Ghost SW] Activated');
-    event.waitUntil(clients.claim());
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
 });
 
-// Keep-alive ping every 30 seconds
-setInterval(() => {
-    self.clients.matchAll().then(clients => {
-        clients.forEach(client => {
-            client.postMessage({ type: 'ping' });
-        });
-    });
-}, 30000);
-
-// Handle messages from the main page
-self.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'inference_job') {
-        // Forward to all clients (the main page handles actual inference)
-        self.clients.matchAll().then(clients => {
-            clients.forEach(client => {
-                if (client.id !== event.source.id) {
-                    client.postMessage(event.data);
-                }
-            });
-        });
-    }
+self.addEventListener("fetch", (event) => {
+  event.respondWith(
+    caches.match(event.request).then((response) => {
+      return response || fetch(event.request);
+    })
+  );
 });
 
-// Background sync for offline queueing (if supported)
-self.addEventListener('sync', (event) => {
-    if (event.tag === 'ghost-sync') {
-        event.waitUntil(
-            self.clients.matchAll().then(clients => {
-                clients.forEach(client => {
-                    client.postMessage({ type: 'sync' });
-                });
-            })
-        );
-    }
+self.addEventListener("sync", (event) => {
+  if (event.tag === "ghost-sync") {
+    event.waitUntil(syncJobs());
+  }
 });
 
-// Push notification handler (for waking up the worker remotely)
-self.addEventListener('push', (event) => {
-    const data = event.data ? event.data.json() : {};
-    console.log('[Ghost SW] Push received:', data);
+async function syncJobs() {
+  const clients = await self.clients.matchAll({ type: "window" });
+  clients.forEach((client) => {
+    client.postMessage({ type: "SYNC_JOBS" });
+  });
+}
 
-    event.waitUntil(
-        self.clients.matchAll({ type: 'window' }).then(clients => {
-            if (clients.length === 0) {
-                // No open windows — open one
-                return self.clients.openWindow('/static/ghost_worker.html');
-            }
-            // Focus existing window
-            clients[0].focus();
-            clients[0].postMessage({ type: 'wake_up', data });
-        })
-    );
-});
-
-// Notification click handler
-self.addEventListener('notificationclick', (event) => {
-    event.notification.close();
-    event.waitUntil(
-        self.clients.openWindow('/static/ghost_worker.html')
-    );
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "ghost-periodic") {
+    event.waitUntil(syncJobs());
+  }
 });

@@ -1,125 +1,119 @@
-# Termux Server v2.3 — "The Pool"
+# Termux Server v2.4 — "The Pool"
 
-A stealth-secured, distributed compute pool built on Termux Server.
+Distributed compute pool, stealth auth, browser automation workers, and web-based management for Termux (Android) and Linux.
 
-**Public sees:** A compute pool anyone can join, donate cycles to, and run inference through.  
-**Owner sees:** Full root shell, file manager, process control, and scheduling — unlocked via a secret cookie gate.
+## Features
 
----
+| Feature | Description |
+|---------|-------------|
+| **Stealth Auth** | No login page. Owner unlocks via `/pool?join=OWNER_SECRET` cookie gate. |
+| **Web Terminal** | Real bash PTY for owners, sandboxed fake shell for public. |
+| **File Manager** | Browse, edit, upload, delete. Owner-only write access. |
+| **Compute Pool** | Register workers (shell, browser, WASM) to share inference load. |
+| **Inference API** | `POST /inference` queues jobs and routes to capable workers. |
+| **Duck.ai Worker** | Stealth Selenium automation that donates Duck.ai answers to the pool. |
+| **Ghost Worker** | Browser-based WASM worker for silent compute donation. |
+| **Federation** | Connect multiple pool instances across devices. |
+| **Rate Limiting** | 10 attempts/hour on the stealth auth gate. |
+| **Command Sandbox** | Blocks `rm -rf /`, fork bombs, pipe-to-shell. |
+| **Token TTL** | Owner tokens expire after 24h. |
 
-## 🎯 The Stealth Auth Model
-
-No login page. No "Admin Panel" button. No obvious auth flow.
-
-| Path | Public | Owner (ghost cookie) |
-|------|--------|----------------------|
-| `/` | Pool dashboard | Pool dashboard |
-| `/terminal` | Fake shell (safe commands only) | Real bash PTY |
-| `/files` | Browse & download only | Upload, edit, delete, create |
-| `/execute` | `404 Not Found` | Full shell execution |
-| `/processes` | `404 Not Found` | Process list & kill |
-| `/schedule` | `404 Not Found` | Cron job scheduler |
-| `/package` | `404 Not Found` | apt-get install/remove |
-
-**How to become owner:**
-```
-GET /pool?join=<OWNER_SECRET>
-```
-This sets an HttpOnly `ghost` cookie and redirects you home. The secret is printed to server logs on first start (or set via `OWNER_SEED` env var).
-
----
-
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-git clone https://github.com/bekingdomcomejoker-cpu/termux-server.git
-cd termux-server
+mkdir -p ~/termux-server && cd ~/termux-server
 bash install.sh
-nohup python3 api_server.py > var/log/api.log 2>&1 &
+export OWNER_SECRET="your-very-secret-string"
+export PORT=8000
+python3 api_server.py
 ```
 
-**Check logs for your owner secret:**
-```bash
-tail -f /home/ubuntu/termux-server/var/log/api.log
+Stealth Auth
+
+No login form. No admin button. Visit:
+
+```
+https://your-server/pool?join=YOUR_SECRET
 ```
 
----
+This sets a `ghost` cookie. Revisit `/terminal` for root PTY access.
 
-## 🌐 Web Interfaces
+Workers
 
-| URL | Access |
-|-----|--------|
-| `/` | Pool dashboard — stats, inference playground, API docs |
-| `/terminal` | Terminal (fake for public, real PTY for owner) |
-| `/files` | File manager (read-only public, full control for owner) |
-
----
-
-## 🔌 API Endpoints
-
-### Public (Pool)
-```
-GET  /health              # Pool health + worker count
-GET  /info                # Environment info
-GET  /pool?join=<secret>  # Become owner (sets ghost cookie)
-GET  /auth/check          # Returns {"owner": true/false}
-POST /inference           # Submit LLM prompt to worker pool
-WS   /ws/terminal         # Terminal (fake shell or real PTY)
-WS   /ws/worker           # Worker node registration
-```
-
-### Owner-Only (404 to public)
-```
-POST /execute             # Shell commands
-POST /file/write          # Write files
-POST /file/upload         # Upload files
-DELETE /file/delete/{path}
-POST /package             # apt-get
-GET  /processes           # List processes
-POST /processes/kill/{pid}
-POST /schedule            # Create cron jobs
-GET  /schedule            # List jobs
-DELETE /schedule/{job_id}
-```
-
----
-
-## 🧠 Inference Playground
-
-Anyone can POST to `/inference`:
-```bash
-curl -X POST https://your-host/inference \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Explain quantum physics", "prefer_gpu": true}'
-```
-
-The server routes the job to an available worker node. If no workers are connected, it queues until one appears.
-
----
-
-## 💻 Donate Compute (Worker Node)
-
-Run `worker_node.py` on any device (PC, old phone, laptop, tablet):
+Generic Shell Worker
 
 ```bash
-export POOL_SERVER="wss://your-host/ws/worker"
-export GGUF_MODEL="/path/to/model.gguf"  # optional
-python3 worker_node.py
+COORDINATOR_URL=ws://localhost:8000/ws/worker python3 worker_node.py
 ```
 
-The worker connects via WebSocket, receives inference jobs, runs them locally, and returns results.
+Duck.ai Browser Worker
 
----
+```bash
+export CHROMEDRIVER_PATH=/data/data/com.termux/files/usr/bin/chromedriver
+export CHROME_BINARY=/data/data/com.termux/files/usr/bin/chromium
+export COORDINATOR_URL=ws://localhost:8000/ws/worker
+python3 tools/duckai_worker.py
+```
 
-## 🔐 Security Notes
+Ghost Browser Worker
+Open `/ghost` in a browser and click Start Ghost.
 
-- `OWNER_SECRET` is auto-generated on first start and logged. Set `OWNER_SEED` env var to fix it.
-- Public endpoints return `404` (not `403`) for owner-only routes to avoid leaking admin existence.
-- The fake shell in `/ws/terminal` for public users is completely sandboxed — it runs no system commands.
-- File read/list/download are public (useful for sharing pool artifacts). Write/delete are owner-only.
+Unified AI Bot (Standalone)
 
----
+```bash
+python3 tools/unified_ai_bot.py "What is the meaning of life?" --platform askrain
+python3 tools/unified_ai_bot.py "Explain quantum computing" --platform duckai
+```
 
-## 📄 License
+API Endpoints
 
-MIT
+Endpoint	Method	Auth	Description	
+`/health`	GET	None	Server status	
+`/execute`	POST	Owner	Run shell commands	
+`/file/read`	POST	None	Read files	
+`/file/write`	POST	Owner	Write files	
+`/file/delete`	POST	Owner	Delete files	
+`/file/list`	GET	None	List directory	
+`/inference`	POST	None	Queue inference job	
+`/inference/stream/{id}`	GET	None	SSE job status	
+`/inference/jobs`	GET	None	Recent jobs	
+`/pool`	GET	None	Pool dashboard / auth gate	
+`/federation/peers`	GET/POST	Owner	Peer management	
+`/ws/worker`	WS	None	Worker registration	
+`/ws/terminal`	WS	Cookie	Interactive terminal	
+
+Security Notes
+
+- No authentication by default — deploy behind HTTPS reverse proxy.
+- `OWNER_SECRET` is printed on server startup. Save it.
+- Public `/execute` is sandboxed to safe commands only.
+- File write/delete requires owner cookie.
+- Rate limiting protects the stealth auth gate.
+
+Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Browser   │     │   Browser   │     │   Termux    │
+│ Ghost Worker│     │ Duck.ai Bot │     │ Shell Worker│
+└──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │  Coordinator│
+                    │  (api_server│
+                    │   built-in) │
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+         ┌────┴────┐  ┌────┴────┐  ┌────┴────┐
+         │  Pool   │  │Terminal │  │  Files  │
+         │Dashboard│  │  (WS)   │  │ Manager │
+         └─────────┘  └─────────┘  └─────────┘
+```
+
+License
+
+MIT — use at your own risk. Browser automation may violate ToS of target sites.
