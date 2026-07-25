@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Termux Web Terminal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: 'SF Mono', Monaco, monospace;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #toolbar {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+        }
+        #toolbar .status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #toolbar .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #238636;
+        }
+        #toolbar .status-dot.disconnected {
+            background: #da3633;
+        }
+        #toolbar button {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        #toolbar button:hover {
+            background: #30363d;
+        }
+        #terminal-container {
+            flex: 1;
+            padding: 8px;
+            overflow: hidden;
+        }
+        .xterm {
+            height: 100% !important;
+        }
+        #connection-error {
+            display: none;
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: #161b22;
+            border: 1px solid #30363d;
+            padding: 24px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        #connection-error h3 {
+            color: #da3633;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <div class="status">
+            <div class="status-dot" id="status-dot"></div>
+            <span id="status-text">Connecting...</span>
+        </div>
+        <button onclick="reconnect()">Reconnect</button>
+        <button onclick="clearTerm()">Clear</button>
+        <span style="margin-left:auto; font-size:11px; color:#8b949e;">
+            Termux Server v2.0
+        </span>
+    </div>
+    <div id="terminal-container"></div>
+    <div id="connection-error">
+        <h3>Connection Lost</h3>
+        <p>WebSocket connection failed. Check server status.</p>
+        <button onclick="reconnect()" style="margin-top:12px;">Reconnect</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script>
+        const term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: '"SF Mono", Monaco, "Cascadia Code", monospace',
+            theme: {
+                background: '#0d1117',
+                foreground: '#c9d1d9',
+                cursor: '#c9d1d9',
+                selectionBackground: '#264f78',
+                black: '#0d1117',
+                red: '#ff7b72',
+                green: '#3fb950',
+                yellow: '#d29922',
+                blue: '#58a6ff',
+                magenta: '#bc8cff',
+                cyan: '#39c5cf',
+                white: '#c9d1d9'
+            }
+        });
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal-container'));
+        fitAddon.fit();
+
+        let ws = null;
+        let connected = false;
+
+        function getWsUrl() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return protocol + '//' + window.location.host + '/ws/terminal';
+        }
+
+        function updateStatus(connected) {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            if (connected) {
+                dot.classList.remove('disconnected');
+                text.textContent = 'Connected';
+                document.getElementById('connection-error').style.display = 'none';
+            } else {
+                dot.classList.add('disconnected');
+                text.textContent = 'Disconnected';
+                document.getElementById('connection-error').style.display = 'block';
+            }
+        }
+
+        function connect() {
+            if (ws) ws.close();
+            ws = new WebSocket(getWsUrl());
+
+            ws.onopen = () => {
+                connected = true;
+                updateStatus(true);
+                // Send terminal size
+                const dims = fitAddon.proposeDimensions();
+                if (dims) {
+                    ws.send(`\x00RESIZE:${dims.cols},${dims.rows}`);
+                }
+            };
+
+            ws.onmessage = (event) => {
+                term.write(event.data);
+            };
+
+            ws.onclose = () => {
+                connected = false;
+                updateStatus(false);
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                connected = false;
+                updateStatus(false);
+            };
+        }
+
+        term.onData((data) => {
+            if (connected && ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+            }
+        });
+
+        function reconnect() {
+            connect();
+        }
+
+        function clearTerm() {
+            term.clear();
+        }
+
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+            if (connected && ws.readyState === WebSocket.OPEN) {
+                const dims = fitAddon.proposeDimensions();
+                if (dims) {
+                    ws.send(`\x00RESIZE:${dims.cols},${dims.rows}`);
+                }
+            }
+        });
+
+        connect();
+    </script>
+</body>
+</html>
