@@ -1,22 +1,35 @@
-# Termux Server v2.2 — Universal "Any-CPU" Distributed Cluster
+# Termux Server v2.3 — "The Pool"
 
-A complete rewrite of the Termux Server with an **integrated web terminal**, **file manager**, **process monitor**, **task scheduler**, **dashboard**, and **Universal Distributed Worker support**.
+A stealth-secured, distributed compute pool built on Termux Server.
 
----
-
-## 🚀 What's New in v2.2: The "Any-CPU" Workaround
-
-You can now harness the power of **any device**—PCs, laptops, old Android phones, or tablets—to build a massive distributed compute cluster for free.
-
-| Feature | v2.1 | v2.2 |
-|---------|------|------|
-| Device Support | GPU-only focus | **Universal (Windows, Linux, Android/Termux)** |
-| Hardware Detection | Manual | **Auto-detects CPU cores, RAM, and GPU** |
-| Intelligent Routing | Random worker | **Prefers GPU; falls back to sharding across CPUs** |
+**Public sees:** A compute pool anyone can join, donate cycles to, and run inference through.  
+**Owner sees:** Full root shell, file manager, process control, and scheduling — unlocked via a secret cookie gate.
 
 ---
 
-## 📦 Quick Install
+## 🎯 The Stealth Auth Model
+
+No login page. No "Admin Panel" button. No obvious auth flow.
+
+| Path | Public | Owner (ghost cookie) |
+|------|--------|----------------------|
+| `/` | Pool dashboard | Pool dashboard |
+| `/terminal` | Fake shell (safe commands only) | Real bash PTY |
+| `/files` | Browse & download only | Upload, edit, delete, create |
+| `/execute` | `404 Not Found` | Full shell execution |
+| `/processes` | `404 Not Found` | Process list & kill |
+| `/schedule` | `404 Not Found` | Cron job scheduler |
+| `/package` | `404 Not Found` | apt-get install/remove |
+
+**How to become owner:**
+```
+GET /pool?join=<OWNER_SECRET>
+```
+This sets an HttpOnly `ghost` cookie and redirects you home. The secret is printed to server logs on first start (or set via `OWNER_SEED` env var).
+
+---
+
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/bekingdomcomejoker-cpu/termux-server.git
@@ -25,52 +38,88 @@ bash install.sh
 nohup python3 api_server.py > var/log/api.log 2>&1 &
 ```
 
+**Check logs for your owner secret:**
+```bash
+tail -f /home/ubuntu/termux-server/var/log/api.log
+```
+
 ---
 
-## 🛠️ Setting Up the Universal Worker Node
+## 🌐 Web Interfaces
 
-Run this on **any** device you want to add to your cluster.
-
-1.  **Install dependencies**:
-    ```bash
-    pip install websocket-client psutil requests
-    ```
-2.  **Run the worker**:
-    ```bash
-    # Download worker_node.py and set SERVER_URL inside
-    python worker_node.py
-    ```
-
-### Why this works (The "Backdoor" Principle)
-This setup leverages the fact that modern CPUs (Intel/AMD/ARM) are designed for background task handling. By running the worker at a low priority, it utilizes "idle cycles" to perform LLM inference without interrupting the owner's work. It's the software equivalent of a distributed mining rig.
+| URL | Access |
+|-----|--------|
+| `/` | Pool dashboard — stats, inference playground, API docs |
+| `/terminal` | Terminal (fake for public, real PTY for owner) |
+| `/files` | File manager (read-only public, full control for owner) |
 
 ---
 
 ## 🔌 API Endpoints
 
-### Core
-```bash
-GET  /health          # Cluster health + GPU/CPU worker counts
-GET  /info            # Detailed worker list and hardware caps
-POST /execute         # Run shell commands
+### Public (Pool)
+```
+GET  /health              # Pool health + worker count
+GET  /info                # Environment info
+GET  /pool?join=<secret>  # Become owner (sets ghost cookie)
+GET  /auth/check          # Returns {"owner": true/false}
+POST /inference           # Submit LLM prompt to worker pool
+WS   /ws/terminal         # Terminal (fake shell or real PTY)
+WS   /ws/worker           # Worker node registration
 ```
 
-### Distributed Inference
-```bash
-POST /inference  
-{
-  "prompt": "Explain quantum physics",
-  "prefer_gpu": true,
-  "params": {"max_tokens": 256}
-}
+### Owner-Only (404 to public)
+```
+POST /execute             # Shell commands
+POST /file/write          # Write files
+POST /file/upload         # Upload files
+DELETE /file/delete/{path}
+POST /package             # apt-get
+GET  /processes           # List processes
+POST /processes/kill/{pid}
+POST /schedule            # Create cron jobs
+GET  /schedule            # List jobs
+DELETE /schedule/{job_id}
 ```
 
 ---
 
-## 🚀 Multi-Instance Management
-Use `coordinator.py` to manage multiple Termux Server "Command Centers" across different accounts.
+## 🧠 Inference Playground
+
+Anyone can POST to `/inference`:
+```bash
+curl -X POST https://your-host/inference \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Explain quantum physics", "prefer_gpu": true}'
+```
+
+The server routes the job to an available worker node. If no workers are connected, it queues until one appears.
+
+---
+
+## 💻 Donate Compute (Worker Node)
+
+Run `worker_node.py` on any device (PC, old phone, laptop, tablet):
+
+```bash
+export POOL_SERVER="wss://your-host/ws/worker"
+export GGUF_MODEL="/path/to/model.gguf"  # optional
+python3 worker_node.py
+```
+
+The worker connects via WebSocket, receives inference jobs, runs them locally, and returns results.
+
+---
+
+## 🔐 Security Notes
+
+- `OWNER_SECRET` is auto-generated on first start and logged. Set `OWNER_SEED` env var to fix it.
+- Public endpoints return `404` (not `403`) for owner-only routes to avoid leaking admin existence.
+- The fake shell in `/ws/terminal` for public users is completely sandboxed — it runs no system commands.
+- File read/list/download are public (useful for sharing pool artifacts). Write/delete are owner-only.
 
 ---
 
 ## 📄 License
+
 MIT

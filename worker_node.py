@@ -1,148 +1,115 @@
 #!/usr/bin/env python3
 """
-Termux Server - Universal Worker Node v2.3
-Supports real LLM inference via llama-cpp-python (CPU/GPU).
+Termux Compute Pool — Worker Node
+Donate idle CPU/GPU cycles to the pool.
 """
 
+import asyncio
+import json
 import os
+import psutil
 import sys
 import time
-import json
-import uuid
-import platform
-import threading
 import websocket
-import multiprocessing
-from typing import Dict, Any
 
-# ── Configuration ──────────────────────────────────────────────
-SERVER_URL = "https://8000-i0nugvn3w77z3rlgv7bzk-5ae40618.us1.manus.computer"
-WORKER_ID = f"worker-{platform.node()}-{uuid.uuid4().hex[:4]}"
-API_KEY = os.environ.get("TERMUX_API_KEY", None)
+SERVER_URL = os.environ.get("POOL_SERVER", "wss://YOUR-MANUS-URL/ws/worker")
+API_KEY = os.environ.get("TERMUX_API_KEY", "")
 
-# Model Path (GGUF format)
-MODEL_PATH = os.environ.get("MODEL_PATH", "models/tiny-llama-1.1b.Q4_K_M.gguf")
+# Try to import llama_cpp for local inference
+try:
+    from llama_cpp import Llama
+    LLAMA_AVAILABLE = True
+except ImportError:
+    LLAMA_AVAILABLE = False
+    print("[Worker] llama_cpp not installed. Install with: pip install llama-cpp-python")
 
-# Global LLM instance
+MODEL_PATH = os.environ.get("GGUF_MODEL", "")
 llm = None
 
-def load_model():
-    global llm
+if LLAMA_AVAILABLE and MODEL_PATH and os.path.exists(MODEL_PATH):
     try:
-        from llama_cpp import Llama
-        print(f"[*] Loading model from {MODEL_PATH}...")
-        llm = Llama(
-            model_path=MODEL_PATH,
-            n_ctx=2048,
-            n_threads=multiprocessing.cpu_count(),
-            n_gpu_layers=-1 if HAS_GPU else 0,
-            verbose=False
-        )
-        print("[+] Model loaded successfully.")
+        print(f"[Worker] Loading model: {MODEL_PATH}")
+        llm = Llama(model_path=MODEL_PATH, n_ctx=2048, verbose=False)
+        print("[Worker] Model loaded.")
     except Exception as e:
-        print(f"[!] Failed to load model: {e}")
+        print(f"[Worker] Failed to load model: {e}")
 
-# Detection
-HAS_GPU = False
-try:
-    import subprocess
-    subprocess.run(["nvidia-smi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    HAS_GPU = True
-except:
-    HAS_GPU = False
 
-CPU_CORES = multiprocessing.cpu_count()
-# ───────────────────────────────────────────────────────────────
+def get_hardware_info():
+    mem = psutil.virtual_memory()
+    info = {
+        "hostname": os.uname().nodename,
+        "platform": sys.platform,
+        "cpu_cores": psutil.cpu_count(),
+        "ram_gb": round(mem.total / (1024**3), 1),
+        "gpu": False,  # Extend with torch/pynvml if needed
+        "model_loaded": llm is not None
+    }
+    return info
 
-def perform_inference(prompt: str, params: Dict[str, Any]) -> str:
-    global llm
-    if llm is None:
-        return "Error: Model not loaded on worker."
-    
-    mode = "GPU" if HAS_GPU else "CPU"
-    print(f"[*] [{mode}] Processing prompt...")
-    
-    try:
-        output = llm(
-            f"Q: {prompt}\nA:",
-            max_tokens=params.get("max_tokens", 128),
-            stop=["Q:", "\n"],
-            echo=False
-        )
-        result = output['choices'][0]['text'].strip()
-        return result
-    except Exception as e:
-        return f"Inference Error: {str(e)}"
 
 def on_message(ws, message):
-    try:
-        data = json.loads(message)
-        if data.get("type") == "inference_request":
-            task_id = data.get("task_id")
-            prompt = data.get("prompt")
-            params = data.get("params", {})
-            
-            def run_task():
-                result = perform_inference(prompt, params)
-                response = {
-                    "type": "inference_response",
-                    "task_id": task_id,
-                    "worker_id": WORKER_ID,
-                    "result": result
-                }
-                ws.send(json.dumps(response))
-                print(f"[+] Task {task_id} completed.")
+    data = json.loads(message)
+    if data.get("type") == "inference":
+        job_id = data["job_id"]
+        prompt = data["prompt"]
+        print(f"[Worker] Job {job_id}: {prompt[:60]}...")
 
-            threading.Thread(target=run_task).start()
-            
-    except Exception as e:
-        print(f"[!] Error: {e}")
+        if llm:
+            try:
+                max_tokens = data.get("params", {}).get("max_tokens", 128)
+                result = llm(prompt, max_tokens=max_tokens, stop=["</s>"])
+                text = result["choices"][0]["text"]
+                ws.send(json.dumps({"type": "inference_result", "job_id": job_id, "result": text}))
+                print(f"[Worker] Job {job_id} complete.")
+                return
+            except Exception as e:
+                print(f"[Worker] Inference error: {e}")
 
-def on_error(ws, error):
-    print(f"[!] WS Error: {error}")
+        # Fallback: echo back if no model
+        ws.send(json.dumps({
+            "type": "inference_result",
+            "job_id": job_id,
+            "result": f"[Worker {os.uname().nodename}] No model loaded. Echo: {prompt[:100]}"
+        }))
 
-def on_close(ws, close_status_code, close_msg):
-    print("[*] Connection lost. Retrying...")
-    time.sleep(5)
-    connect_to_server()
 
 def on_open(ws):
-    print(f"[+] Connected to Termux Server as {WORKER_ID}")
-    import psutil
-    registration = {
-        "type": "worker_registration",
-        "worker_id": WORKER_ID,
-        "platform": platform.system(),
-        "capabilities": {
-            "has_gpu": HAS_GPU,
-            "cpu_cores": CPU_CORES,
-            "ram_gb": round(psutil.virtual_memory().total / (1024**3), 1),
-            "model": MODEL_PATH
-        }
-    }
-    ws.send(json.dumps(registration))
+    print(f"[Worker] Connected to pool: {SERVER_URL}")
+    ws.send(json.dumps({"type": "heartbeat", "hardware": get_hardware_info()}))
 
-def connect_to_server():
-    ws_url = SERVER_URL.replace("http", "ws").rstrip("/") + "/ws/worker"
-    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+
+def on_close(ws, close_status_code, close_msg):
+    print("[Worker] Disconnected. Reconnecting in 5s...")
+    time.sleep(5)
+    start_worker()
+
+
+def on_error(ws, error):
+    print(f"[Worker] Error: {error}")
+
+
+def start_worker():
+    headers = {}
+    if API_KEY:
+        headers["X-API-Key"] = API_KEY
+
     ws = websocket.WebSocketApp(
-        ws_url, header=headers,
-        on_open=on_open, on_message=on_message,
-        on_error=on_error, on_close=on_close
+        SERVER_URL,
+        header=headers,
+        on_open=on_open,
+        on_message=on_message,
+        on_close=on_close,
+        on_error=on_error
     )
     ws.run_forever()
 
+
 if __name__ == "__main__":
-    print(f"=== Termux Server Universal Worker v2.3 ===")
-    
-    # Check dependencies
-    try:
-        import llama_cpp
-        import websocket
-        import psutil
-    except ImportError:
-        print("[!] Missing dependencies. Run: pip install llama-cpp-python websocket-client psutil")
-        sys.exit(1)
-        
-    load_model()
-    connect_to_server()
+    print("=" * 50)
+    print("  Termux Compute Pool — Worker Node")
+    print("=" * 50)
+    print(f"  Server: {SERVER_URL}")
+    print(f"  Model:  {MODEL_PATH or 'None (echo mode)'}")
+    print("=" * 50)
+    start_worker()
