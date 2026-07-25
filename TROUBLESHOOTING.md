@@ -13,21 +13,35 @@ pkg install python-fastapi python-uvicorn python-websockets -y
 
 ---
 
-## Fix 2: Set Android API Level + Install Build Tools
-If Fix 1 fails, set the environment variable the error asks for, then install the Rust toolchain so `pydantic-core` can compile:
+## ✅ Confirmed Fix: Set Android API Level + Build Tools
 
+This is the confirmed solution for **Python 3.14 on Termux (Android API 33/arm64)**. It allows `maturin` to compile `pydantic-core` correctly.
+
+### 1. Set the Environment Variable
+Run this to tell the compiler your Android version:
 ```bash
-# Set Android API level (auto-detects from device)
 export ANDROID_API_LEVEL=$(getprop ro.build.version.sdk)
-echo "API Level: $ANDROID_API_LEVEL"
+```
 
-# Install Rust + build essentials
+### 2. Install Build Essentials
+Install the Rust toolchain and LLVM utilities:
+```bash
 pkg install rust binutils-is-llvm lld -y
+```
 
-# Re-run pip
-pip install --upgrade pip
+### 3. Install Python Packages
+Now `pip` will be able to build the native wheels:
+```bash
 pip install fastapi uvicorn websockets selenium
 ```
+
+### 4. Make it Permanent
+Add the export to your `.bashrc` so you don't have to run it again:
+```bash
+echo 'export ANDROID_API_LEVEL=$(getprop ro.build.version.sdk)' >> ~/.bashrc
+source ~/.bashrc
+```
+
 
 ---
 
