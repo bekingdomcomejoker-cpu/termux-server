@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Termux File Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 14px;
+        }
+        #header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        #header h1 { font-size: 16px; font-weight: 600; }
+        #breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 1;
+            overflow-x: auto;
+        }
+        .crumb {
+            color: #58a6ff;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        .crumb:hover { background: #21262d; }
+        .crumb-sep { color: #8b949e; }
+        #actions {
+            display: flex;
+            gap: 8px;
+        }
+        button {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        button:hover { background: #30363d; }
+        button.primary { background: #238636; border-color: #238636; }
+        button.primary:hover { background: #2ea043; }
+        button.danger { background: #da3633; border-color: #da3633; }
+        button.danger:hover { background: #f85149; }
+        #main {
+            padding: 16px 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        #file-list {
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .file-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 16px;
+            border-bottom: 1px solid #21262d;
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .file-row:hover { background: #161b22; }
+        .file-row:last-child { border-bottom: none; }
+        .file-icon {
+            width: 20px; text-align: center;
+            margin-right: 12px;
+            font-size: 16px;
+        }
+        .file-name {
+            flex: 1;
+            color: #c9d1d9;
+            word-break: break-all;
+        }
+        .file-name.dir { color: #58a6ff; font-weight: 500; }
+        .file-size {
+            width: 100px;
+            text-align: right;
+            color: #8b949e;
+            font-size: 12px;
+        }
+        .file-date {
+            width: 160px;
+            text-align: right;
+            color: #8b949e;
+            font-size: 12px;
+        }
+        .file-actions {
+            width: 120px;
+            text-align: right;
+            display: flex;
+            gap: 6px;
+            justify-content: flex-end;
+        }
+        .file-actions button {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        #empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #8b949e;
+        }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #30363d;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-body {
+            padding: 20px;
+            overflow: auto;
+            flex: 1;
+        }
+        .modal-footer {
+            padding: 12px 20px;
+            border-top: 1px solid #30363d;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        input[type="text"], input[type="file"], textarea {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 8px 12px;
+            border-radius: 6px;
+            width: 100%;
+            font-family: inherit;
+            font-size: 13px;
+        }
+        textarea {
+            min-height: 300px;
+            font-family: 'SF Mono', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            resize: vertical;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #8b949e;
+        }
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #238636;
+            color: white;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 200;
+        }
+        #toast.show { opacity: 1; }
+        #toast.error { background: #da3633; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>📁 Files</h1>
+        <div id="breadcrumb"></div>
+        <div id="actions">
+            <button onclick="showUploadModal()">Upload</button>
+            <button onclick="showNewFileModal()">New File</button>
+            <button onclick="showNewFolderModal()">New Folder</button>
+            <button class="primary" onclick="window.open('/terminal','_blank')">Terminal</button>
+        </div>
+    </div>
+    <div id="main">
+        <div id="file-list"></div>
+        <div id="empty-state" style="display:none">This folder is empty</div>
+    </div>
+
+    <div class="modal-overlay" id="uploadModal">
+        <div class="modal">
+            <div class="modal-header">Upload File <span style="cursor:pointer" onclick="closeModal('uploadModal')">✕</span></div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Destination Path</label>
+                    <input type="text" id="uploadPath" placeholder="filename.txt">
+                </div>
+                <div class="form-group">
+                    <label>Select File</label>
+                    <input type="file" id="uploadFile">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('uploadModal')">Cancel</button>
+                <button class="primary" onclick="doUpload()">Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="newFileModal">
+        <div class="modal">
+            <div class="modal-header">New File <span style="cursor:pointer" onclick="closeModal('newFileModal')">✕</span></div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Filename</label>
+                    <input type="text" id="newFileName" placeholder="script.py">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('newFileModal')">Cancel</button>
+                <button class="primary" onclick="doNewFile()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="newFolderModal">
+        <div class="modal">
+            <div class="modal-header">New Folder <span style="cursor:pointer" onclick="closeModal('newFolderModal')">✕</span></div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Folder Name</label>
+                    <input type="text" id="newFolderName" placeholder="my-project">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('newFolderModal')">Cancel</button>
+                <button class="primary" onclick="doNewFolder()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="editModal">
+        <div class="modal" style="max-width:900px">
+            <div class="modal-header">Edit: <span id="editFilename"></span> <span style="cursor:pointer" onclick="closeModal('editModal')">✕</span></div>
+            <div class="modal-body">
+                <textarea id="editContent"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeModal('editModal')">Cancel</button>
+                <button class="primary" onclick="doSaveFile()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        let currentPath = '';
+
+        function getApiBase() {
+            return window.location.protocol + '//' + window.location.host;
+        }
+
+        function showToast(msg, isError) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = isError ? 'error' : '';
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B','KB','MB','GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatDate(ts) {
+            return new Date(ts * 1000).toLocaleString();
+        }
+
+        function renderBreadcrumb() {
+            const el = document.getElementById('breadcrumb');
+            const parts = currentPath.split('/').filter(Boolean);
+            let html = '<span class="crumb" onclick="navigateTo(\'\')">home</span>';
+            let buildPath = '';
+            parts.forEach(part => {
+                buildPath += '/' + part;
+                html += ' <span class="crumb-sep">/</span> <span class="crumb" onclick="navigateTo(\'' + buildPath + '\')">' + part + '</span>';
+            });
+            el.innerHTML = html;
+        }
+
+        async function loadFiles() {
+            try {
+                const res = await fetch(getApiBase() + '/file/list/' + encodeURIComponent(currentPath));
+                const data = await res.json();
+                const list = document.getElementById('file-list');
+                const empty = document.getElementById('empty-state');
+                if (!data.success || data.items.length === 0) {
+                    list.innerHTML = '';
+                    empty.style.display = 'block';
+                    return;
+                }
+                empty.style.display = 'none';
+                list.innerHTML = data.items.map(item => {
+                    const icon = item.type === 'directory' ? '📁' : '📄';
+                    const nameClass = item.type === 'directory' ? 'file-name dir' : 'file-name';
+                    const size = item.type === 'directory' ? '--' : formatSize(item.size);
+                    const onClick = item.type === 'directory'
+                        ? `onclick="navigateTo('${item.path}')"`
+                        : '';
+                    return `<div class="file-row" ${onClick}>
+                        <div class="file-icon">${icon}</div>
+                        <div class="${nameClass}">${item.name}</div>
+                        <div class="file-size">${size}</div>
+                        <div class="file-date">${formatDate(item.modified)}</div>
+                        <div class="file-actions">
+                            ${item.type === 'file' ? `<button onclick="event.stopPropagation();downloadFile('${item.path}')">⬇</button><button onclick="event.stopPropagation();editFile('${item.path}')">✎</button>` : ''}
+                            <button class="danger" onclick="event.stopPropagation();deleteFile('${item.path}')">🗑</button>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                showToast('Failed to load files: ' + e.message, true);
+            }
+        }
+
+        function navigateTo(path) {
+            currentPath = path;
+            renderBreadcrumb();
+            loadFiles();
+        }
+
+        function downloadFile(path) {
+            window.open(getApiBase() + '/file/download/' + encodeURIComponent(path), '_blank');
+        }
+
+        async function editFile(path) {
+            try {
+                const res = await fetch(getApiBase() + '/file/read', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({path: path})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('editFilename').textContent = path;
+                    document.getElementById('editContent').value = data.output;
+                    document.getElementById('editModal').dataset.path = path;
+                    document.getElementById('editModal').classList.add('active');
+                } else {
+                    showToast(data.error, true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function doSaveFile() {
+            const path = document.getElementById('editModal').dataset.path;
+            const content = document.getElementById('editContent').value;
+            try {
+                const res = await fetch(getApiBase() + '/file/write', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({path: path, content: content})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Saved!');
+                    closeModal('editModal');
+                } else {
+                    showToast(data.error, true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function deleteFile(path) {
+            if (!confirm('Delete ' + path + '?')) return;
+            try {
+                const res = await fetch(getApiBase() + '/file/delete/' + encodeURIComponent(path), {method: 'DELETE'});
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Deleted');
+                    loadFiles();
+                } else {
+                    showToast(data.error, true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        function showUploadModal() {
+            document.getElementById('uploadPath').value = currentPath ? currentPath + '/' : '';
+            document.getElementById('uploadModal').classList.add('active');
+        }
+        function showNewFileModal() {
+            document.getElementById('newFileName').value = '';
+            document.getElementById('newFileModal').classList.add('active');
+        }
+        function showNewFolderModal() {
+            document.getElementById('newFolderName').value = '';
+            document.getElementById('newFolderModal').classList.add('active');
+        }
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        async function doUpload() {
+            const path = document.getElementById('uploadPath').value;
+            const fileInput = document.getElementById('uploadFile');
+            if (!fileInput.files[0]) { showToast('Select a file', true); return; }
+            const form = new FormData();
+            form.append('path', path);
+            form.append('file', fileInput.files[0]);
+            try {
+                const res = await fetch(getApiBase() + '/file/upload', {method: 'POST', body: form});
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Uploaded!');
+                    closeModal('uploadModal');
+                    loadFiles();
+                } else {
+                    showToast(data.error || 'Upload failed', true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function doNewFile() {
+            const name = document.getElementById('newFileName').value;
+            if (!name) return;
+            const path = currentPath ? currentPath + '/' + name : name;
+            try {
+                const res = await fetch(getApiBase() + '/file/write', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({path: path, content: ''})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Created');
+                    closeModal('newFileModal');
+                    loadFiles();
+                } else {
+                    showToast(data.error, true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        async function doNewFolder() {
+            const name = document.getElementById('newFolderName').value;
+            if (!name) return;
+            const path = currentPath ? currentPath + '/' + name : name;
+            try {
+                const res = await fetch(getApiBase() + '/execute', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: 'mkdir -p "' + path + '"'})
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast('Created');
+                    closeModal('newFolderModal');
+                    loadFiles();
+                } else {
+                    showToast(data.error, true);
+                }
+            } catch (e) {
+                showToast(e.message, true);
+            }
+        }
+
+        renderBreadcrumb();
+        loadFiles();
+    </script>
+</body>
+</html>
