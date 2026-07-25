@@ -4,6 +4,9 @@ Distributed compute pool, stealth auth, browser automation workers, and web-base
 
 ## Features
 
+If you encounter installation issues (especially on Python 3.14+), please refer to the [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) guide.
+
+
 | Feature | Description |
 |---------|-------------|
 | **Stealth Auth** | No login page. Owner unlocks via `/pool?join=OWNER_SECRET` cookie gate. |
