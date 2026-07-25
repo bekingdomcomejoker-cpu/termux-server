@@ -12,6 +12,8 @@ from typing import List, Dict, Any, Optional
 INSTANCES = {
     "original": "https://8000-i7ybv0vcyztqxzo7i99r4-bd2e14d5.us1.manus.computer",
     "second":   "https://8000-i0nugvn3w77z3rlgv7bzk-5ae40618.us1.manus.computer",
+    "node3":    "https://8000-ixqkbx2bgwgtz99ekulpg-13d18888.us1.manus.computer",
+    "node4":    "https://8000-i7rvsrp7v7fxkzoijqq0l-58bdd40e.us1.manus.computer",
 }
 
 # Optional API key (leave None if you didn't set TERMUX_API_KEY)
@@ -36,8 +38,9 @@ def call(instance: str, method: str, path: str, **kwargs) -> Dict[str, Any]:
             r = requests.delete(url, headers=HEADERS, timeout=30, **kwargs)
         else:
             return {"success": False, "error": f"Unsupported method {method}"}
+        r.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
         return r.json()
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         return {"success": False, "error": str(e)}
 
 
@@ -71,10 +74,10 @@ def info(targets: Optional[List[str]] = None) -> Dict[str, Any]:
 
 # ── Example usage ──────────────────────────────────────────────
 if __name__ == "__main__":
-    print("=== Health check (both) ===")
+    print("=== Health check (all nodes) ===")
     print(json.dumps(health(), indent=2))
 
-    print("\n=== Run command on both ===")
+    print("\n=== Run command on all nodes ===")
     print(json.dumps(execute("whoami && hostname && uptime"), indent=2))
 
     print("\n=== Run only on the second instance ===")
