@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termux Web Terminal</title>
+    <title>Termux Compute Pool — Terminal</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -46,17 +46,13 @@
             cursor: pointer;
             font-size: 12px;
         }
-        #toolbar button:hover {
-            background: #30363d;
-        }
+        #toolbar button:hover { background: #30363d; }
         #terminal-container {
             flex: 1;
             padding: 8px;
             overflow: hidden;
         }
-        .xterm {
-            height: 100% !important;
-        }
+        .xterm { height: 100% !important; }
         #connection-error {
             display: none;
             position: fixed;
@@ -68,10 +64,15 @@
             border-radius: 8px;
             text-align: center;
         }
-        #connection-error h3 {
-            color: #da3633;
-            margin-bottom: 8px;
+        #connection-error h3 { color: #da3633; margin-bottom: 8px; }
+        #mode-badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #30363d;
+            color: #8b949e;
         }
+        #mode-badge.owner { background: #238636; color: white; }
     </style>
 </head>
 <body>
@@ -80,10 +81,11 @@
             <div class="status-dot" id="status-dot"></div>
             <span id="status-text">Connecting...</span>
         </div>
+        <span id="mode-badge">donor</span>
         <button onclick="reconnect()">Reconnect</button>
         <button onclick="clearTerm()">Clear</button>
         <span style="margin-left:auto; font-size:11px; color:#8b949e;">
-            Termux Server v2.0
+            Termux Compute Pool v2.3
         </span>
     </div>
     <div id="terminal-container"></div>
@@ -128,10 +130,10 @@
             return protocol + '//' + window.location.host + '/ws/terminal';
         }
 
-        function updateStatus(connected) {
+        function updateStatus(isConnected) {
             const dot = document.getElementById('status-dot');
             const text = document.getElementById('status-text');
-            if (connected) {
+            if (isConnected) {
                 dot.classList.remove('disconnected');
                 text.textContent = 'Connected';
                 document.getElementById('connection-error').style.display = 'none';
@@ -142,6 +144,21 @@
             }
         }
 
+        async function checkOwner() {
+            try {
+                const res = await fetch(window.location.protocol + '//' + window.location.host + '/auth/check');
+                const data = await res.json();
+                const badge = document.getElementById('mode-badge');
+                if (data.owner) {
+                    badge.textContent = 'owner';
+                    badge.classList.add('owner');
+                } else {
+                    badge.textContent = 'donor';
+                    badge.classList.remove('owner');
+                }
+            } catch(e) {}
+        }
+
         function connect() {
             if (ws) ws.close();
             ws = new WebSocket(getWsUrl());
@@ -149,7 +166,6 @@
             ws.onopen = () => {
                 connected = true;
                 updateStatus(true);
-                // Send terminal size
                 const dims = fitAddon.proposeDimensions();
                 if (dims) {
                     ws.send(`\x00RESIZE:${dims.cols},${dims.rows}`);
@@ -165,8 +181,7 @@
                 updateStatus(false);
             };
 
-            ws.onerror = (err) => {
-                console.error('WebSocket error:', err);
+            ws.onerror = () => {
                 connected = false;
                 updateStatus(false);
             };
@@ -178,13 +193,8 @@
             }
         });
 
-        function reconnect() {
-            connect();
-        }
-
-        function clearTerm() {
-            term.clear();
-        }
+        function reconnect() { connect(); }
+        function clearTerm() { term.clear(); }
 
         window.addEventListener('resize', () => {
             fitAddon.fit();
@@ -196,6 +206,7 @@
             }
         });
 
+        checkOwner();
         connect();
     </script>
 </body>
