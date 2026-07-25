@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termux Server Dashboard</title>
+    <title>Termux Compute Pool</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -16,30 +16,42 @@
         #header {
             background: #161b22;
             border-bottom: 1px solid #30363d;
-            padding: 20px;
+            padding: 32px 20px;
             text-align: center;
         }
-        #header h1 { font-size: 24px; margin-bottom: 4px; }
-        #header p { color: #8b949e; font-size: 14px; }
+        #header h1 { font-size: 28px; margin-bottom: 8px; background: linear-gradient(90deg, #58a6ff, #bc8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        #header p { color: #8b949e; font-size: 15px; max-width: 500px; margin: 0 auto; }
+        #stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            padding: 16px;
+            background: #0d1117;
+            border-bottom: 1px solid #21262d;
+        }
+        .stat { text-align: center; }
+        .stat-num { font-size: 22px; font-weight: 700; color: #3fb950; font-family: 'SF Mono', monospace; }
+        .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
         #nav {
             display: flex;
             justify-content: center;
             gap: 12px;
-            padding: 16px;
-            background: #0d1117;
-            border-bottom: 1px solid #21262d;
+            padding: 20px;
+            flex-wrap: wrap;
         }
         .nav-btn {
             background: #21262d;
             border: 1px solid #30363d;
             color: #c9d1d9;
-            padding: 10px 20px;
+            padding: 12px 24px;
             border-radius: 8px;
             text-decoration: none;
             font-size: 14px;
             transition: all 0.2s;
         }
         .nav-btn:hover { background: #30363d; border-color: #58a6ff; }
+        .nav-btn.primary { background: #238636; border-color: #238636; color: white; }
+        .nav-btn.primary:hover { background: #2ea043; }
         #main {
             max-width: 900px;
             margin: 0 auto;
@@ -49,45 +61,18 @@
             background: #161b22;
             border: 1px solid #30363d;
             border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
         }
         .card h2 {
             font-size: 16px;
-            margin-bottom: 12px;
+            margin-bottom: 16px;
             color: #f0f6fc;
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 12px;
-        }
-        .stat-box {
-            background: #0d1117;
-            border: 1px solid #21262d;
-            border-radius: 8px;
-            padding: 16px;
-        }
-        .stat-label {
-            font-size: 12px;
-            color: #8b949e;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 4px;
-        }
-        .stat-value {
-            font-size: 20px;
-            font-weight: 600;
-            color: #f0f6fc;
-            font-family: 'SF Mono', monospace;
-        }
-        .stat-value.ok { color: #3fb950; }
-        .stat-value.warn { color: #d29922; }
-        .stat-value.danger { color: #f85149; }
-        .endpoints {
-            display: grid;
+            display: flex;
+            align-items: center;
             gap: 8px;
         }
+        .endpoints { display: grid; gap: 8px; }
         .endpoint {
             display: flex;
             align-items: center;
@@ -110,154 +95,125 @@
         }
         .method.ws { background: #bc8cff; }
         .method.get { background: #58a6ff; }
-        .method.delete { background: #da3633; }
         .path { color: #c9d1d9; }
         .desc { color: #8b949e; margin-left: auto; font-size: 12px; font-family: inherit; }
-        #quick-test {
-            display: flex;
-            gap: 8px;
-            margin-top: 12px;
-        }
-        #quick-test input {
+        #inference-box { display: flex; gap: 8px; margin-top: 12px; }
+        #inference-box textarea {
             flex: 1;
             background: #0d1117;
             border: 1px solid #30363d;
             color: #c9d1d9;
-            padding: 8px 12px;
+            padding: 12px;
             border-radius: 6px;
-            font-family: 'SF Mono', monospace;
-            font-size: 13px;
+            font-family: inherit;
+            font-size: 14px;
+            min-height: 80px;
+            resize: vertical;
         }
-        #quick-test button {
+        #inference-box button {
             background: #238636;
             border: none;
             color: white;
-            padding: 8px 16px;
+            padding: 12px 20px;
             border-radius: 6px;
             cursor: pointer;
-            font-weight: 500;
+            font-weight: 600;
         }
-        #quick-result {
-            margin-top: 12px;
+        #inf-result {
+            margin-top: 16px;
             background: #0d1117;
             border: 1px solid #21262d;
             border-radius: 6px;
-            padding: 12px;
+            padding: 16px;
             font-family: 'SF Mono', monospace;
-            font-size: 12px;
+            font-size: 13px;
             white-space: pre-wrap;
-            max-height: 200px;
-            overflow: auto;
             display: none;
+            line-height: 1.6;
         }
-        .footer {
-            text-align: center;
-            padding: 24px;
-            color: #484f58;
-            font-size: 12px;
-        }
+        .footer { text-align: center; padding: 32px; color: #484f58; font-size: 12px; }
+        .footer a { color: #58a6ff; text-decoration: none; }
     </style>
 </head>
 <body>
     <div id="header">
-        <h1>🚀 Termux Server</h1>
-        <p>Persistent shell environment — API, Web Terminal & File Manager</p>
+        <h1>🌐 Termux Compute Pool</h1>
+        <p>Distributed inference network powered by donated CPU & GPU cycles. Open to all. Owned by none.</p>
+    </div>
+    <div id="stats-bar">
+        <div class="stat"><div class="stat-num" id="stat-workers">0</div><div class="stat-label">Active Donors</div></div>
+        <div class="stat"><div class="stat-num" id="stat-mem">-</div><div class="stat-label">Memory</div></div>
+        <div class="stat"><div class="stat-num" id="stat-load">-</div><div class="stat-label">Load</div></div>
     </div>
     <div id="nav">
-        <a href="/terminal" class="nav-btn" target="_blank">💻 Web Terminal</a>
-        <a href="/files" class="nav-btn" target="_blank">📁 File Manager</a>
+        <a href="/terminal" class="nav-btn" target="_blank">💻 Terminal</a>
+        <a href="/files" class="nav-btn" target="_blank">📁 Files</a>
+        <a href="/static/ghost_worker.html" class="nav-btn" target="_blank">👻 Browser Worker</a>
+        <a href="#" class="nav-btn primary" onclick="downloadWorker()">⬇ Download Worker</a>
     </div>
     <div id="main">
         <div class="card">
-            <h2>📊 System Status</h2>
-            <div class="stats-grid" id="stats">
-                <div class="stat-box"><div class="stat-label">CPU Cores</div><div class="stat-value" id="cpu">-</div></div>
-                <div class="stat-box"><div class="stat-label">Load Avg</div><div class="stat-value" id="load">-</div></div>
-                <div class="stat-box"><div class="stat-label">Memory</div><div class="stat-value" id="mem">-</div></div>
-                <div class="stat-box"><div class="stat-label">Disk Free</div><div class="stat-value" id="disk">-</div></div>
+            <h2>🧠 Inference Playground</h2>
+            <p style="color:#8b949e; margin-bottom:12px; font-size:13px;">Submit a prompt. It will be routed to an available donor node.</p>
+            <div id="inference-box">
+                <textarea id="promptInput" placeholder="Explain quantum entanglement in simple terms..."></textarea>
+                <button onclick="runInference()">Run</button>
             </div>
+            <pre id="inf-result"></pre>
         </div>
-
         <div class="card">
-            <h2>⚡ Quick Test</h2>
-            <div id="quick-test">
-                <input type="text" id="cmdInput" placeholder="whoami" value="whoami && pwd && uname -a">
-                <button onclick="runQuick()">Run</button>
-            </div>
-            <pre id="quick-result"></pre>
-        </div>
-
-        <div class="card">
-            <h2>🔌 API Endpoints</h2>
+            <h2>🔌 Pool API</h2>
             <div class="endpoints">
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/health</span><span class="desc">Health check + system stats</span></div>
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/info</span><span class="desc">Environment details</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/execute</span><span class="desc">Run shell commands</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/file/read</span><span class="desc">Read text files</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/file/write</span><span class="desc">Write text files</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/file/upload</span><span class="desc">Upload binary files</span></div>
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/file/download/{path}</span><span class="desc">Download files</span></div>
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/file/list/{path}</span><span class="desc">List directory contents</span></div>
-                <div class="endpoint"><span class="method delete">DEL</span><span class="path">/file/delete/{path}</span><span class="desc">Delete files/folders</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/package</span><span class="desc">apt-get install/remove/update</span></div>
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/processes</span><span class="desc">List running processes</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/processes/kill/{pid}</span><span class="desc">Terminate a process</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/schedule</span><span class="desc">Create cron-like scheduled task</span></div>
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/schedule</span><span class="desc">List scheduled tasks</span></div>
-                <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/terminal</span><span class="desc">Real-time WebSocket terminal</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/health</span><span class="desc">Pool health + stats</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/inference</span><span class="desc">Submit inference job</span></div>
+                <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/worker</span><span class="desc">Connect as compute donor</span></div>
+                <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/terminal</span><span class="desc">Pool node terminal</span></div>
             </div>
         </div>
     </div>
-    <div class="footer">Termux Server v2.0 — Built for Manus</div>
-
+    <div class="footer">
+        Termux Compute Pool v2.3 — <a href="/pool">Join the Pool</a> — <a href="https://github.com/bekingdomcomejoker-cpu/termux-server" target="_blank">GitHub</a>
+    </div>
     <script>
         const base = window.location.protocol + '//' + window.location.host;
-
         async function loadStats() {
             try {
-                const [info, health] = await Promise.all([
-                    fetch(base + '/info').then(r => r.json()),
-                    fetch(base + '/health').then(r => r.json())
-                ]);
-                document.getElementById('cpu').textContent = info.cpu_count || '-';
-                document.getElementById('load').textContent = info.load_avg ? info.load_avg.map(x=>x.toFixed(2)).join(', ') : '-';
-                if (health.memory) {
-                    const m = health.memory;
-                    document.getElementById('mem').textContent = m.percent + '%';
-                    document.getElementById('mem').className = 'stat-value ' + (m.percent > 90 ? 'danger' : m.percent > 70 ? 'warn' : 'ok');
-                }
-                if (health.disk) {
-                    const d = health.disk;
-                    const gb = (d.free / 1e9).toFixed(1);
-                    document.getElementById('disk').textContent = gb + ' GB';
-                }
-            } catch (e) {
-                console.error('Stats load failed', e);
-            }
+                const res = await fetch(base + '/health');
+                const data = await res.json();
+                document.getElementById('stat-workers').textContent = data.workers || 0;
+                if (data.memory) document.getElementById('stat-mem').textContent = data.memory.percent + '%';
+                const info = await fetch(base + '/info').then(r => r.json());
+                if (info.load_avg) document.getElementById('stat-load').textContent = info.load_avg[0].toFixed(2);
+            } catch(e) {}
         }
-
-        async function runQuick() {
-            const cmd = document.getElementById('cmdInput').value;
-            const out = document.getElementById('quick-result');
+        async function runInference() {
+            const prompt = document.getElementById('promptInput').value;
+            const out = document.getElementById('inf-result');
+            if (!prompt.trim()) return;
             out.style.display = 'block';
-            out.textContent = 'Running...';
+            out.textContent = 'Routing to donor node...';
             try {
-                const res = await fetch(base + '/execute', {
+                const res = await fetch(base + '/inference', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({command: cmd, timeout: 30})
+                    body: JSON.stringify({prompt: prompt, prefer_gpu: true})
                 });
                 const data = await res.json();
-                out.textContent = (data.output || '') + (data.error ? '\nERROR: ' + data.error : '');
+                out.textContent = `[${data.status.toUpperCase()}]\n\n${data.result || ''}`;
             } catch (e) {
                 out.textContent = 'Error: ' + e.message;
             }
         }
-
-        document.getElementById('cmdInput').addEventListener('keypress', e => {
-            if (e.key === 'Enter') runQuick();
-        });
-
+        function downloadWorker() {
+            const wsBase = base.replace(/^http/, 'ws');
+            const code = `#!/usr/bin/env python3\n# Termux Compute Pool Worker\nimport os, json, websocket, time\nSERVER = os.environ.get("POOL_SERVER", "${wsBase}/ws/worker")\ndef on_message(ws, msg):\n    data = json.loads(msg)\n    if data.get("type") == "inference":\n        result = f"[Echo from {os.uname().nodename}] {data['prompt'][:200]}"\n        ws.send(json.dumps({"type": "inference_result", "job_id": data["job_id"], "result": result}))\ndef on_open(ws): print("[Worker] Connected")\ndef on_close(ws, c, m): time.sleep(5); start()\ndef start():\n    ws = websocket.WebSocketApp(SERVER, on_open=on_open, on_message=on_message, on_close=on_close)\n    ws.run_forever()\nif __name__ == "__main__": start()\n`;
+            const blob = new Blob([code], {type: 'text/x-python'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'worker_node.py';
+            a.click();
+        }
         loadStats();
         setInterval(loadStats, 10000);
     </script>
