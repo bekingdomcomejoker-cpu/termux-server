@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Termux Compute Node</title>
+    <style>
+        body { font-family: monospace; background: #1a1a1a; color: #0f0; padding: 20px; }
+        .status { padding: 10px; background: #222; border: 1px solid #0f0; margin: 10px 0; }
+        .active { border-color: #0f0; }
+        .inactive { border-color: #f00; }
+    </style>
+</head>
+<body>
+    <h1>🖥️ Termux Compute Node (WASM Worker)</h1>
+    <div id="status" class="status inactive">
+        <strong>Status:</strong> <span id="status-text">Connecting...</span><br>
+        <strong>Worker ID:</strong> <span id="worker-id">Loading...</span><br>
+        <strong>Tasks Completed:</strong> <span id="task-count">0</span>
+    </div>
+
+    <script>
+        // Service Worker registration for background persistence
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('ghost_worker_sw.js').catch(e => console.log('SW failed:', e));
+        }
+
+        const WORKER_ID = 'wasm-' + Math.random().toString(36).substr(2, 9);
+        let taskCount = 0;
+        let ws = null;
+
+        function updateStatus(text, active) {
+            document.getElementById('status-text').textContent = text;
+            document.getElementById('status').className = 'status ' + (active ? 'active' : 'inactive');
+            document.getElementById('worker-id').textContent = WORKER_ID;
+            document.getElementById('task-count').textContent = taskCount;
+        }
+
+        function connectToServer() {
+            const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + 
+                          '//' + window.location.host + '/ws/worker';
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus('Connected', true);
+                ws.send(JSON.stringify({
+                    type: 'worker_registration',
+                    worker_id: WORKER_ID,
+                    platform: 'WASM/Browser',
+                    capabilities: {
+                        has_gpu: !!navigator.gpu,
+                        cpu_cores: navigator.hardwareConcurrency || 1,
+                        engine: 'webllm'
+                    }
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'inference_request') {
+                    handleInference(msg);
+                }
+            };
+
+            ws.onerror = () => updateStatus('Error', false);
+            ws.onclose = () => {
+                updateStatus('Disconnected', false);
+                setTimeout(connectToServer, 5000);
+            };
+        }
+
+        async function handleInference(msg) {
+            updateStatus('Processing...', true);
+            try {
+                // Placeholder: In production, load a real WASM model here
+                // Example: using transformers.js or similar
+                const result = `[WASM-${WORKER_ID}] Processed: ${msg.prompt.substring(0, 30)}...`;
+                
+                ws.send(JSON.stringify({
+                    type: 'inference_response',
+                    task_id: msg.task_id,
+                    worker_id: WORKER_ID,
+                    result: result
+                }));
+                taskCount++;
+                updateStatus('Connected', true);
+            } catch (e) {
+                ws.send(JSON.stringify({
+                    type: 'inference_response',
+                    task_id: msg.task_id,
+                    worker_id: WORKER_ID,
+                    result: `Error: ${e.message}`
+                }));
+            }
+        }
+
+        connectToServer();
+    </script>
+</body>
+</html>

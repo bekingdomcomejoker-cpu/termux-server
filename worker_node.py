@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Termux Server - Universal Worker Node v2.0
-Cross-platform: Windows, Linux, Android (Termux).
-Supports GPU (CUDA/ROCm) and CPU-only (GGUF) inference.
+Termux Server - Universal Worker Node v2.3
+Supports real LLM inference via llama-cpp-python (CPU/GPU).
 """
 
 import os
@@ -11,7 +10,6 @@ import time
 import json
 import uuid
 import platform
-import requests
 import threading
 import websocket
 import multiprocessing
@@ -22,11 +20,32 @@ SERVER_URL = "https://8000-i0nugvn3w77z3rlgv7bzk-5ae40618.us1.manus.computer"
 WORKER_ID = f"worker-{platform.node()}-{uuid.uuid4().hex[:4]}"
 API_KEY = os.environ.get("TERMUX_API_KEY", None)
 
+# Model Path (GGUF format)
+MODEL_PATH = os.environ.get("MODEL_PATH", "models/tiny-llama-1.1b.Q4_K_M.gguf")
+
+# Global LLM instance
+llm = None
+
+def load_model():
+    global llm
+    try:
+        from llama_cpp import Llama
+        print(f"[*] Loading model from {MODEL_PATH}...")
+        llm = Llama(
+            model_path=MODEL_PATH,
+            n_ctx=2048,
+            n_threads=multiprocessing.cpu_count(),
+            n_gpu_layers=-1 if HAS_GPU else 0,
+            verbose=False
+        )
+        print("[+] Model loaded successfully.")
+    except Exception as e:
+        print(f"[!] Failed to load model: {e}")
+
 # Detection
 HAS_GPU = False
 try:
     import subprocess
-    # Simple check for NVIDIA GPU
     subprocess.run(["nvidia-smi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     HAS_GPU = True
 except:
@@ -36,24 +55,24 @@ CPU_CORES = multiprocessing.cpu_count()
 # ───────────────────────────────────────────────────────────────
 
 def perform_inference(prompt: str, params: Dict[str, Any]) -> str:
-    """
-    Inference Logic:
-    - If HAS_GPU: Use high-performance engine.
-    - If CPU-only: Use llama-cpp-python or similar with GGUF models.
-    """
+    global llm
+    if llm is None:
+        return "Error: Model not loaded on worker."
+    
     mode = "GPU" if HAS_GPU else "CPU"
-    print(f"[*] [{mode}] Processing prompt: {prompt[:50]}...")
+    print(f"[*] [{mode}] Processing prompt...")
     
-    # Placeholder for actual inference call:
-    # Example for CPU (GGUF):
-    # from llama_cpp import Llama
-    # llm = Llama(model_path="model.gguf", n_threads=CPU_CORES)
-    # output = llm(prompt, max_tokens=params.get("max_tokens", 128))
-    
-    # Simulate processing time based on complexity
-    time.sleep(1 if HAS_GPU else 3)
-    
-    return f"[Worker {WORKER_ID}] [{mode}] Result for: {prompt}"
+    try:
+        output = llm(
+            f"Q: {prompt}\nA:",
+            max_tokens=params.get("max_tokens", 128),
+            stop=["Q:", "\n"],
+            echo=False
+        )
+        result = output['choices'][0]['text'].strip()
+        return result
+    except Exception as e:
+        return f"Inference Error: {str(e)}"
 
 def on_message(ws, message):
     try:
@@ -89,6 +108,7 @@ def on_close(ws, close_status_code, close_msg):
 
 def on_open(ws):
     print(f"[+] Connected to Termux Server as {WORKER_ID}")
+    import psutil
     registration = {
         "type": "worker_registration",
         "worker_id": WORKER_ID,
@@ -96,7 +116,8 @@ def on_open(ws):
         "capabilities": {
             "has_gpu": HAS_GPU,
             "cpu_cores": CPU_CORES,
-            "ram_gb": round(psutil.virtual_memory().total / (1024**3), 1) if 'psutil' in sys.modules else "Unknown"
+            "ram_gb": round(psutil.virtual_memory().total / (1024**3), 1),
+            "model": MODEL_PATH
         }
     }
     ws.send(json.dumps(registration))
@@ -112,20 +133,16 @@ def connect_to_server():
     ws.run_forever()
 
 if __name__ == "__main__":
-    print(f"=== Termux Server Universal Worker v2.0 ===")
-    print(f"[*] OS: {platform.system()} | CPU Cores: {CPU_CORES} | GPU: {HAS_GPU}")
+    print(f"=== Termux Server Universal Worker v2.3 ===")
     
     # Check dependencies
-    deps_ok = True
-    try: import websocket
-    except: 
-        print("[!] Missing 'websocket-client'. Run: pip install websocket-client")
-        deps_ok = False
-    try: import psutil
-    except: 
-        print("[!] Missing 'psutil'. Run: pip install psutil")
-        deps_ok = False
+    try:
+        import llama_cpp
+        import websocket
+        import psutil
+    except ImportError:
+        print("[!] Missing dependencies. Run: pip install llama-cpp-python websocket-client psutil")
+        sys.exit(1)
         
-    if not deps_ok: sys.exit(1)
-    
+    load_model()
     connect_to_server()
