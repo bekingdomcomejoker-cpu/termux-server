@@ -2,23 +2,8 @@
 """
 duck_ai_chat.py — Duck.ai automation (AskRain-style)
 
-Primary path: unofficial HTTP clients (duckai / duck-chat / ddgs) — preferred.
-Fallback path: Selenium against https://duck.ai/ (fragile; UI changes).
-
-Note: PyPI package `duckai` ships amd64/macOS wheels only — on Termux arm64
-prefer `duckduckgo-search` / `ddgs` or Selenium.
-
-Env (all optional except prompt):
-  DUCKAI_PROMPT          First user message
-  DUCKAI_MODEL           Model id (see --list-models)
-  DUCKAI_MAX_TURNS       Default 3
-  DUCKAI_TURN_DELAY      Seconds between turns (default 16)
-  DUCKAI_MODE            api | selenium | auto  (default auto)
-  DUCKAI_HEADLESS        1/0 for selenium (default 1)
-  CHROME_BIN / CHROMEDRIVER
-  DUCKAI_LOG_DIR
-
-Disclaimer: Unofficial. Respect DuckDuckGo terms and rate limits.
+Duck.ai UI: must click Send (↑ / Ask). Enter alone usually does nothing.
+Termux: prefer Selenium; API wheels often fail on arm64.
 """
 
 from __future__ import annotations
@@ -26,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -62,6 +48,16 @@ MODEL_ALIASES = {
     "o3-mini": "o3-mini",
 }
 
+CHROME_NOISE = re.compile(
+    r"(Anonymized by DuckDuckGo|Zero data retention|No AI training|"
+    r"Learn more|New Chat|New Voice Chat|Settings|Get the App|"
+    r"How Duck\.ai Works|Chat Suggestions|Create & Edit Images|"
+    r"All chats are private|AI can make mistakes|"
+    r"Duck\.ai, by DuckDuckGo|DuckDuckGo anonymizes|"
+    r"Privacy Policy|Terms of Service|Free\s*\|\s*by DuckDuckGo)",
+    re.I,
+)
+
 
 def log(msg: str) -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -77,7 +73,6 @@ def save_text(name: str, text: str) -> None:
 
 def try_api_chat(prompt: str, model: str) -> str | None:
     model = MODEL_ALIASES.get(model, model)
-
     try:
         from duckai import DuckAI  # type: ignore
 
@@ -90,43 +85,16 @@ def try_api_chat(prompt: str, model: str) -> str | None:
     except Exception as e:
         log(f"[api:duckai] unavailable: {e}")
 
-    try:
-        import asyncio
-
+    for mod in ("duckduckgo_search", "ddgs"):
         try:
-            from duck_chat import DuckChat  # type: ignore
-        except ImportError:
-            from duckduckgo_chat_ai import DuckChat  # type: ignore
-
-        async def _ask() -> str:
-            async with DuckChat() as chat:
-                return await chat.ask_question(prompt)
-
-        log("[api:duck_chat] asking…")
-        return asyncio.run(_ask())
-    except Exception as e:
-        log(f"[api:duck_chat] unavailable: {e}")
-
-    try:
-        from duckduckgo_search import DDGS  # type: ignore
-
-        log("[api:ddgs] trying chat…")
-        with DDGS() as ddgs:
-            if hasattr(ddgs, "chat"):
-                return ddgs.chat(prompt, model=model)
-    except Exception as e:
-        log(f"[api:ddgs] unavailable: {e}")
-
-    try:
-        from ddgs import DDGS as DDGS2  # type: ignore
-
-        log("[api:ddgs-pkg] trying…")
-        with DDGS2() as ddgs:
-            if hasattr(ddgs, "chat"):
-                return ddgs.chat(prompt, model=model)
-    except Exception as e:
-        log(f"[api:ddgs-pkg] unavailable: {e}")
-
+            m = __import__(mod, fromlist=["DDGS"])
+            DDGS = m.DDGS
+            log(f"[api:{mod}] trying chat…")
+            with DDGS() as ddgs:
+                if hasattr(ddgs, "chat"):
+                    return ddgs.chat(prompt, model=model)
+        except Exception as e:
+            log(f"[api:{mod}] unavailable: {e}")
     return None
 
 
@@ -143,10 +111,10 @@ def build_driver():
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1280,1800")
+    opts.add_argument("--window-size=420,900")
     opts.add_argument(
-        "--user-agent=Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        "--user-agent=Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     )
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
@@ -179,30 +147,99 @@ def build_driver():
     return driver
 
 
-def selenium_find_input(driver, timeout: int = 25):
+def selenium_find_input(driver, timeout: int = 30):
     from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
 
     selectors = [
+        "textarea[placeholder*='Reply']",
+        "textarea[placeholder*='Ask']",
         "textarea",
-        "textarea[placeholder]",
         "[contenteditable='true']",
-        "input[type='text']",
         "[role='textbox']",
-        "form textarea",
+        "input[type='text']",
     ]
     last_err = None
-    for sel in selectors:
-        try:
-            el = WebDriverWait(driver, max(3, timeout // len(selectors))).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, sel))
-            )
-            if el.is_displayed():
-                return el
-        except Exception as e:
-            last_err = e
+    end = time.time() + timeout
+    while time.time() < end:
+        for sel in selectors:
+            try:
+                for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                    if el.is_displayed() and el.is_enabled():
+                        return el
+            except Exception as e:
+                last_err = e
+        time.sleep(0.4)
     raise RuntimeError(f"Could not find chat input on {URL}: {last_err}")
+
+
+def selenium_click_send(driver) -> bool:
+    from selenium.webdriver.common.by import By
+
+    candidates = []
+    for sel in (
+        "button[aria-label*='Send' i]",
+        "button[aria-label*='Ask' i]",
+        "button[type='submit']",
+        "[data-testid*='send' i]",
+        "[data-testid*='ask' i]",
+        "button",
+    ):
+        try:
+            candidates.extend(driver.find_elements(By.CSS_SELECTOR, sel))
+        except Exception:
+            pass
+
+    scored = []
+    for el in candidates:
+        try:
+            if not el.is_displayed() or not el.is_enabled():
+                continue
+            label = " ".join(
+                filter(
+                    None,
+                    [
+                        el.get_attribute("aria-label") or "",
+                        el.get_attribute("title") or "",
+                        el.text or "",
+                        el.get_attribute("class") or "",
+                    ],
+                )
+            ).lower()
+            score = 0
+            if any(k in label for k in ("send", "ask", "submit")):
+                score += 5
+            if "arrow" in label:
+                score += 3
+            scored.append((score, el))
+        except Exception:
+            continue
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    for score, el in scored:
+        if score >= 3:
+            try:
+                el.click()
+                log(f"clicked send control (score={score})")
+                return True
+            except Exception:
+                try:
+                    driver.execute_script("arguments[0].click();", el)
+                    log("clicked send via JS")
+                    return True
+                except Exception:
+                    continue
+
+    try:
+        buttons = [
+            b for b in driver.find_elements(By.CSS_SELECTOR, "button") if b.is_displayed()
+        ]
+        if buttons:
+            driver.execute_script("arguments[0].click();", buttons[-1])
+            log("clicked last visible button as send fallback")
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def selenium_send(driver, text: str) -> None:
@@ -210,113 +247,159 @@ def selenium_send(driver, text: str) -> None:
 
     box = selenium_find_input(driver)
     box.click()
+    time.sleep(0.2)
     try:
         box.clear()
     except Exception:
         pass
-    box.send_keys(text)
-    box.send_keys(Keys.ENTER)
+    try:
+        box.send_keys(text)
+    except Exception:
+        driver.execute_script(
+            "const el=arguments[0],val=arguments[1]; el.focus(); el.value=val;"
+            "el.dispatchEvent(new Event('input',{bubbles:true}));",
+            box,
+            text,
+        )
+    time.sleep(0.3)
+
+    clicked = selenium_click_send(driver)
+    if not clicked:
+        log("send button not found; trying Enter as last resort")
+        try:
+            box.send_keys(Keys.ENTER)
+        except Exception:
+            pass
     log(f">>> {text[:120]}{'…' if len(text) > 120 else ''}")
 
 
-def selenium_wait_reply(driver, previous_len: int, timeout: int = 120) -> str:
+def _clean_body(text: str, prompt: str) -> str:
+    t = CHROME_NOISE.sub(" ", text)
+    t = re.sub(r"\s+", " ", t).strip()
+    if prompt and t.startswith(prompt):
+        t = t[len(prompt) :].strip()
+    return t
+
+
+def selenium_wait_reply(driver, prompt: str, timeout: int = 90) -> str:
     from selenium.webdriver.common.by import By
 
     deadline = time.time() + timeout
-    last = ""
+    last_good = ""
     stable = 0
+    prompt_l = prompt.strip().lower()
+
     while time.time() < deadline:
-        candidates = []
+        snippets: list[str] = []
+
         for sel in (
             "[data-testid*='assistant']",
             "[data-testid*='message']",
-            ".assistant",
-            ".message",
-            "article",
-            "[class*='response']",
             "[class*='assistant']",
+            "[class*='response']",
+            "article",
+            "[role='article']",
+            "main p",
+            "main div",
         ):
             try:
-                candidates.extend(driver.find_elements(By.CSS_SELECTOR, sel))
+                for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                    t = (el.text or "").strip()
+                    if len(t) < 8:
+                        continue
+                    if t.lower() == prompt_l:
+                        continue
+                    if CHROME_NOISE.search(t) and len(t) < 80:
+                        continue
+                    snippets.append(t)
             except Exception:
                 pass
-        texts = []
-        for el in candidates:
-            t = (el.text or "").strip()
-            if t and len(t) > 2:
-                texts.append(t)
-        if texts:
-            current = texts[-1]
-        else:
-            current = (driver.find_element(By.TAG_NAME, "body").text or "").strip()
-            if len(current) > previous_len + 20:
-                current = current[previous_len:].strip()
 
-        if current and current != last and len(current) > 5:
-            last = current
-            stable = 0
-        elif current and current == last:
-            stable += 1
-            if stable >= 3:
-                return current
-        time.sleep(1.2)
-    if last:
-        return last
-    raise TimeoutError("Timed out waiting for Duck.ai reply")
+        body = ""
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text or ""
+        except Exception:
+            pass
+
+        m = re.search(
+            r"(?:GPT-[\d.]+|Claude|Mistral|Llama)[^\n]*\n+(.+?)(?:\n\s*\n|$)",
+            body,
+            re.S | re.I,
+        )
+        if m:
+            candidate = CHROME_NOISE.sub(" ", m.group(1).strip())
+            candidate = re.sub(r"\s+", " ", candidate).strip()
+            if len(candidate) > 15 and candidate.lower() != prompt_l:
+                snippets.append(candidate)
+
+        cleaned = _clean_body(body, prompt)
+        if cleaned and len(cleaned) > 20:
+            snippets.append(cleaned)
+
+        snippets = sorted(set(snippets), key=len, reverse=True)
+        current = ""
+        for s in snippets:
+            if prompt_l and prompt_l in s.lower() and len(s) < len(prompt) + 30:
+                continue
+            if "New Chat" in s or s.startswith("Duck.ai"):
+                continue
+            current = s
+            break
+
+        if current and len(current) > 15:
+            if current == last_good:
+                stable += 1
+                if stable >= 3:
+                    return current
+            else:
+                last_good = current
+                stable = 0
+        time.sleep(1.0)
+
+    if last_good:
+        return last_good
+    raise TimeoutError("Timed out waiting for Duck.ai reply (send may not have clicked)")
 
 
 def run_selenium(
     prompt: str, followups: list[str], model: str, max_turns: int = MAX_TURNS
 ) -> list[tuple[str, str]]:
-    from selenium.webdriver.common.by import By
-
     driver = build_driver()
     conversation: list[tuple[str, str]] = []
     try:
         log(f"Opening {URL}")
         driver.get(URL)
-        time.sleep(4)
+        time.sleep(5)
         try:
             driver.save_screenshot(str(LOG_DIR / "00_loaded.png"))
         except Exception:
             pass
 
-        if model:
-            try:
-                for el in driver.find_elements(By.CSS_SELECTOR, "button, [role='button']"):
-                    t = (el.text or "").lower()
-                    if "model" in t or "gpt" in t or "claude" in t:
-                        el.click()
-                        time.sleep(1)
-                        break
-            except Exception:
-                pass
-
-        turns = [prompt] + followups
+        turns = [prompt] + list(followups)
         for i, msg in enumerate(turns[:max_turns]):
-            before = len((driver.find_element(By.TAG_NAME, "body").text or ""))
             selenium_send(driver, msg)
             try:
-                reply = selenium_wait_reply(driver, before)
+                reply = selenium_wait_reply(driver, msg)
             except TimeoutError as e:
                 log(str(e))
                 try:
                     (LOG_DIR / f"timeout_{i}.html").write_text(
                         driver.page_source, encoding="utf-8"
                     )
+                    driver.save_screenshot(str(LOG_DIR / f"timeout_{i}.png"))
                 except Exception:
                     pass
                 break
             conversation.append((msg, reply))
-            log("<<")
-            print(reply[:2000] + ("…" if len(reply) > 2000 else ""))
+            log("<<<")
+            print(reply[:3000] + ("…" if len(reply) > 3000 else ""))
             try:
                 driver.save_screenshot(str(LOG_DIR / f"{i:02d}_after.png"))
             except Exception:
                 pass
             if i < len(turns) - 1:
                 delay = TURN_DELAY + random.uniform(0, 2)
-                log(f"sleep {delay:.1f}s (rate limit hygiene)")
+                log(f"sleep {delay:.1f}s")
                 time.sleep(delay)
         save_text(
             "conversation.log",
@@ -331,34 +414,30 @@ def run_selenium(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Duck.ai chat automation (API-first)")
-    parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT, help="First message")
+    parser = argparse.ArgumentParser(description="Duck.ai chat automation")
+    parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT)
     parser.add_argument("-m", "--model", default=DEFAULT_MODEL)
     parser.add_argument("--mode", choices=("auto", "api", "selenium"), default=MODE)
     parser.add_argument("--max-turns", type=int, default=MAX_TURNS)
-    parser.add_argument(
-        "-f", "--followup", action="append", default=[], help="Extra turn (repeatable)"
-    )
+    parser.add_argument("-f", "--followup", action="append", default=[])
     parser.add_argument("--list-models", action="store_true")
     args = parser.parse_args()
 
     if args.list_models:
-        print("Common model ids / aliases:")
         for k, v in MODEL_ALIASES.items():
             print(f"  {k:20} -> {v}")
-        print("\nOn Termux/arm64: pip install -U duckduckgo-search selenium")
-        print("Package duckai has no arm64 wheels — use ddgs or Selenium.")
+        print("\nTermux: use Selenium (API wheels often missing on arm64).")
+        print("Duck.ai UI: must click Send (↑); Enter alone usually fails.")
         return 0
 
     prompt = (args.prompt or "").strip()
     if not prompt:
-        log("No prompt. Set DUCKAI_PROMPT or pass as argument.")
+        log("No prompt. Pass one as argument or set DUCKAI_PROMPT.")
         return 2
 
     max_turns = args.max_turns
     mode = args.mode
     model = args.model
-
     log(f"mode={mode} model={model} max_turns={max_turns}")
 
     if mode in ("auto", "api"):
@@ -366,18 +445,10 @@ def main() -> int:
         if reply:
             print(reply)
             save_text("conversation.log", f"USER: {prompt}\n\nAI: {reply}")
-            for fu in args.followup[: max(0, max_turns - 1)]:
-                time.sleep(TURN_DELAY + random.uniform(0, 1))
-                r2 = try_api_chat(fu, model)
-                if not r2:
-                    break
-                print(r2)
-                with open(LOG_DIR / "conversation.log", "a", encoding="utf-8") as f:
-                    f.write(f"\n\nUSER: {fu}\n\nAI: {r2}")
             log("Done (API).")
             return 0
         if mode == "api":
-            log("API mode failed and selenium not requested.")
+            log("API failed.")
             return 1
         log("Falling back to Selenium…")
 
