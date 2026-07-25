@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Termux Server API v2.0
-Integrated web terminal, file manager, process control, and task scheduler.
-Replaces ttyd with a built-in WebSocket terminal.
+Termux Server API v2.1
+Integrated web terminal, file manager, process control, task scheduler,
+and Distributed GPU Worker Node support.
 """
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header, Request
@@ -44,7 +44,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Termux Server API v2.0", version="2.0.0")
+app = FastAPI(title="Termux Server API v2.1", version="2.1.0")
 
 # Environment configuration
 TERMUX_HOME = "/home/ubuntu/termux-server/home"
@@ -72,6 +72,10 @@ else:
 # Active terminal sessions
 terminal_sessions: Dict[str, Dict] = {}
 
+# Distributed Worker Nodes
+worker_nodes: Dict[str, WebSocket] = {}
+pending_tasks: Dict[str, asyncio.Future] = {}
+
 # ============== AUTH ==============
 async def verify_key(x_api_key: Optional[str] = Header(None)):
     if API_KEY and x_api_key != API_KEY:
@@ -98,6 +102,11 @@ class ScheduleRequest(BaseModel):
     command: str
     cron: str  # e.g. "*/5 * * * *"
     enabled: bool = True
+
+class InferenceRequest(BaseModel):
+    prompt: str
+    params: Optional[Dict[str, Any]] = None
+    worker_id: Optional[str] = None
 
 class TermuxResponse(BaseModel):
     success: bool
@@ -128,7 +137,8 @@ async def health():
         "service": "termux-server",
         "uptime": time.time() - psutil.boot_time(),
         "memory": {"total": mem.total, "available": mem.available, "percent": mem.percent},
-        "disk": {"total": disk.total, "free": disk.free, "percent": disk.percent}
+        "disk": {"total": disk.total, "free": disk.free, "percent": disk.percent},
+        "workers": len(worker_nodes)
     }
 
 @app.get("/info")
@@ -141,7 +151,8 @@ async def get_info():
         "system": uname,
         "python_version": __import__("sys").version,
         "cpu_count": os.cpu_count(),
-        "load_avg": os.getloadavg() if hasattr(os, "getloadavg") else None
+        "load_avg": os.getloadavg() if hasattr(os, "getloadavg") else None,
+        "workers": list(worker_nodes.keys())
     }
 
 # ============== COMMAND EXECUTION ==============
@@ -174,6 +185,72 @@ async def execute_command(request: CommandRequest):
         return TermuxResponse(success=False, output="", error=f"Timeout after {request.timeout}s", returncode=-1)
     except Exception as e:
         return TermuxResponse(success=False, output="", error=str(e), returncode=-1)
+
+# ============== DISTRIBUTED INFERENCE ==============
+@app.post("/inference")
+async def run_inference(request: InferenceRequest):
+    if not worker_nodes:
+        raise HTTPException(status_code=503, detail="No active worker nodes available")
+    
+    target_worker = request.worker_id or next(iter(worker_nodes))
+    if target_worker not in worker_nodes:
+        raise HTTPException(status_code=404, detail=f"Worker {target_worker} not found")
+    
+    task_id = str(uuid.uuid4())[:8]
+    task_future = asyncio.get_event_loop().create_future()
+    pending_tasks[task_id] = task_future
+    
+    payload = {
+        "type": "inference_request",
+        "task_id": task_id,
+        "prompt": request.prompt,
+        "params": request.params or {}
+    }
+    
+    try:
+        await worker_nodes[target_worker].send_text(json.dumps(payload))
+        # Wait for result from worker (timeout after 60s)
+        result = await asyncio.wait_for(task_future, timeout=60.0)
+        return {"success": True, "task_id": task_id, "worker": target_worker, "result": result}
+    except asyncio.TimeoutError:
+        pending_tasks.pop(task_id, None)
+        raise HTTPException(status_code=504, detail="Worker timed out")
+    except Exception as e:
+        pending_tasks.pop(task_id, None)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============== WEBSOCKET WORKER ==============
+@app.websocket("/ws/worker")
+async def websocket_worker(websocket: WebSocket):
+    await websocket.accept()
+    worker_id = None
+    logger.info("[Worker] Attempting connection")
+    
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            
+            if msg.get("type") == "worker_registration":
+                worker_id = msg.get("worker_id")
+                worker_nodes[worker_id] = websocket
+                logger.info(f"[Worker {worker_id}] Registered")
+                
+            elif msg.get("type") == "inference_response":
+                task_id = msg.get("task_id")
+                result = msg.get("result")
+                if task_id in pending_tasks:
+                    pending_tasks[task_id].set_result(result)
+                    pending_tasks.pop(task_id)
+                    
+    except WebSocketDisconnect:
+        if worker_id:
+            worker_nodes.pop(worker_id, None)
+            logger.info(f"[Worker {worker_id}] Disconnected")
+    except Exception as e:
+        logger.error(f"[Worker] Error: {e}")
+        if worker_id:
+            worker_nodes.pop(worker_id, None)
 
 # ============== FILE OPERATIONS ==============
 @app.post("/file/read", response_model=TermuxResponse)
@@ -421,63 +498,27 @@ async def websocket_terminal(websocket: WebSocket):
             async def write_to_pty():
                 while True:
                     try:
-                        msg = await websocket.receive_text()
-                        if msg.startswith("\x00RESIZE:"):
-                            # Handle resize: \x00RESIZE:cols,rows
-                            parts = msg.split(":")[1].split(",")
-                            cols, rows = int(parts[0]), int(parts[1])
-                            import struct, termios
-                            s = struct.pack("HHHH", rows, cols, 0, 0)
-                            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, s)
-                        else:
-                            os.write(master_fd, msg.encode("utf-8"))
+                        data = await websocket.receive_text()
+                        os.write(master_fd, data.encode())
                     except WebSocketDisconnect:
                         break
-                    except Exception as e:
-                        logger.error(f"[Terminal {session_id}] Write error: {e}")
+                    except Exception:
                         break
 
-            # Run both directions concurrently
-            read_task = asyncio.create_task(read_from_pty())
-            write_task = asyncio.create_task(write_to_pty())
-
-            done, pending = await asyncio.wait(
-                [read_task, write_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending:
-                task.cancel()
+            # Run both bridge tasks
+            await asyncio.gather(read_from_pty(), write_to_pty())
 
     except WebSocketDisconnect:
         logger.info(f"[Terminal {session_id}] Disconnected")
-    except Exception as e:
-        logger.error(f"[Terminal {session_id}] Error: {e}")
     finally:
-        # Cleanup
-        if session_id in terminal_sessions:
-            sess = terminal_sessions[session_id]
+        if pid:
             try:
-                os.close(sess["fd"])
-                os.kill(sess["pid"], signal.SIGTERM)
-            except:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
                 pass
-            terminal_sessions.pop(session_id, None)
-        try:
-            await websocket.close()
-        except:
-            pass
+        terminal_sessions.pop(session_id, None)
 
-# ============== WEB UI ROUTES ==============
-@app.get("/terminal", response_class=HTMLResponse)
-async def terminal_page():
-    return open(os.path.join(TERMUX_STATIC, "terminal.html")).read()
-
-@app.get("/files", response_class=HTMLResponse)
-async def file_manager_page():
-    return open(os.path.join(TERMUX_STATIC, "file_manager.html")).read()
-
-# ============== MAIN ==============
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting Termux Server API v2.0")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    logger.info("Starting Termux Server API v2.1")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
