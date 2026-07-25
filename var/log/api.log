@@ -1,0 +1,29 @@
+INFO:     Started server process [10133]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:36154 - "GET / HTTP/1.1" 200 OK
+INFO:     10.245.79.1:39662 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     10.245.79.1:39666 - "HEAD /execute HTTP/1.1" 405 Method Not Allowed
+INFO:     10.245.79.1:39674 - "GET / HTTP/1.1" 200 OK
+INFO:     10.245.79.1:39680 - "GET /execute HTTP/1.1" 405 Method Not Allowed
+INFO:     10.245.79.1:58960 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:37318 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:49466 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:52710 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     10.245.79.1:52714 - "GET / HTTP/1.1" 200 OK
+INFO:     10.245.79.1:38764 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:51556 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:39862 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:35848 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:42808 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:45620 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:45752 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:60560 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:59038 - "HEAD /execute HTTP/1.1" 405 Method Not Allowed
+INFO:     10.245.79.1:59046 - "GET /execute HTTP/1.1" 405 Method Not Allowed
+INFO:     10.245.79.1:47510 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:59674 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:36906 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:46406 - "POST /execute HTTP/1.1" 200 OK
+INFO:     10.245.79.1:35996 - "POST /execute HTTP/1.1" 200 OK
