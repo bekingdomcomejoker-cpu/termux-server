@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Termux Server Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        #header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 20px;
+            text-align: center;
+        }
+        #header h1 { font-size: 24px; margin-bottom: 4px; }
+        #header p { color: #8b949e; font-size: 14px; }
+        #nav {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            padding: 16px;
+            background: #0d1117;
+            border-bottom: 1px solid #21262d;
+        }
+        .nav-btn {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #30363d; border-color: #58a6ff; }
+        #main {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 24px 20px;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .card h2 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #f0f6fc;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+        }
+        .stat-box {
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-size: 20px;
+            font-weight: 600;
+            color: #f0f6fc;
+            font-family: 'SF Mono', monospace;
+        }
+        .stat-value.ok { color: #3fb950; }
+        .stat-value.warn { color: #d29922; }
+        .stat-value.danger { color: #f85149; }
+        .endpoints {
+            display: grid;
+            gap: 8px;
+        }
+        .endpoint {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            background: #0d1117;
+            border-radius: 6px;
+            font-family: 'SF Mono', monospace;
+            font-size: 13px;
+        }
+        .method {
+            background: #238636;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            min-width: 50px;
+            text-align: center;
+        }
+        .method.ws { background: #bc8cff; }
+        .method.get { background: #58a6ff; }
+        .method.delete { background: #da3633; }
+        .path { color: #c9d1d9; }
+        .desc { color: #8b949e; margin-left: auto; font-size: 12px; font-family: inherit; }
+        #quick-test {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        #quick-test input {
+            flex: 1;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: 'SF Mono', monospace;
+            font-size: 13px;
+        }
+        #quick-test button {
+            background: #238636;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        #quick-result {
+            margin-top: 12px;
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'SF Mono', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow: auto;
+            display: none;
+        }
+        .footer {
+            text-align: center;
+            padding: 24px;
+            color: #484f58;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🚀 Termux Server</h1>
+        <p>Persistent shell environment — API, Web Terminal & File Manager</p>
+    </div>
+    <div id="nav">
+        <a href="/terminal" class="nav-btn" target="_blank">💻 Web Terminal</a>
+        <a href="/files" class="nav-btn" target="_blank">📁 File Manager</a>
+    </div>
+    <div id="main">
+        <div class="card">
+            <h2>📊 System Status</h2>
+            <div class="stats-grid" id="stats">
+                <div class="stat-box"><div class="stat-label">CPU Cores</div><div class="stat-value" id="cpu">-</div></div>
+                <div class="stat-box"><div class="stat-label">Load Avg</div><div class="stat-value" id="load">-</div></div>
+                <div class="stat-box"><div class="stat-label">Memory</div><div class="stat-value" id="mem">-</div></div>
+                <div class="stat-box"><div class="stat-label">Disk Free</div><div class="stat-value" id="disk">-</div></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>⚡ Quick Test</h2>
+            <div id="quick-test">
+                <input type="text" id="cmdInput" placeholder="whoami" value="whoami && pwd && uname -a">
+                <button onclick="runQuick()">Run</button>
+            </div>
+            <pre id="quick-result"></pre>
+        </div>
+
+        <div class="card">
+            <h2>🔌 API Endpoints</h2>
+            <div class="endpoints">
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/health</span><span class="desc">Health check + system stats</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/info</span><span class="desc">Environment details</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/execute</span><span class="desc">Run shell commands</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/file/read</span><span class="desc">Read text files</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/file/write</span><span class="desc">Write text files</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/file/upload</span><span class="desc">Upload binary files</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/file/download/{path}</span><span class="desc">Download files</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/file/list/{path}</span><span class="desc">List directory contents</span></div>
+                <div class="endpoint"><span class="method delete">DEL</span><span class="path">/file/delete/{path}</span><span class="desc">Delete files/folders</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/package</span><span class="desc">apt-get install/remove/update</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/processes</span><span class="desc">List running processes</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/processes/kill/{pid}</span><span class="desc">Terminate a process</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/schedule</span><span class="desc">Create cron-like scheduled task</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/schedule</span><span class="desc">List scheduled tasks</span></div>
+                <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/terminal</span><span class="desc">Real-time WebSocket terminal</span></div>
+            </div>
+        </div>
+    </div>
+    <div class="footer">Termux Server v2.0 — Built for Manus</div>
+
+    <script>
+        const base = window.location.protocol + '//' + window.location.host;
+
+        async function loadStats() {
+            try {
+                const [info, health] = await Promise.all([
+                    fetch(base + '/info').then(r => r.json()),
+                    fetch(base + '/health').then(r => r.json())
+                ]);
+                document.getElementById('cpu').textContent = info.cpu_count || '-';
+                document.getElementById('load').textContent = info.load_avg ? info.load_avg.map(x=>x.toFixed(2)).join(', ') : '-';
+                if (health.memory) {
+                    const m = health.memory;
+                    document.getElementById('mem').textContent = m.percent + '%';
+                    document.getElementById('mem').className = 'stat-value ' + (m.percent > 90 ? 'danger' : m.percent > 70 ? 'warn' : 'ok');
+                }
+                if (health.disk) {
+                    const d = health.disk;
+                    const gb = (d.free / 1e9).toFixed(1);
+                    document.getElementById('disk').textContent = gb + ' GB';
+                }
+            } catch (e) {
+                console.error('Stats load failed', e);
+            }
+        }
+
+        async function runQuick() {
+            const cmd = document.getElementById('cmdInput').value;
+            const out = document.getElementById('quick-result');
+            out.style.display = 'block';
+            out.textContent = 'Running...';
+            try {
+                const res = await fetch(base + '/execute', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: cmd, timeout: 30})
+                });
+                const data = await res.json();
+                out.textContent = (data.output || '') + (data.error ? '\nERROR: ' + data.error : '');
+            } catch (e) {
+                out.textContent = 'Error: ' + e.message;
+            }
+        }
+
+        document.getElementById('cmdInput').addEventListener('keypress', e => {
+            if (e.key === 'Enter') runQuick();
+        });
+
+        loadStats();
+        setInterval(loadStats, 10000);
+    </script>
+</body>
+</html>
