@@ -24,13 +24,16 @@
         #stats-bar {
             display: flex;
             justify-content: center;
-            gap: 32px;
+            gap: 24px;
             padding: 16px;
             background: #0d1117;
             border-bottom: 1px solid #21262d;
+            flex-wrap: wrap;
         }
-        .stat { text-align: center; }
+        .stat { text-align: center; min-width: 80px; }
         .stat-num { font-size: 22px; font-weight: 700; color: #3fb950; font-family: 'SF Mono', monospace; }
+        .stat-num.warn { color: #d29922; }
+        .stat-num.danger { color: #f85149; }
         .stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
         #nav {
             display: flex;
@@ -119,6 +122,9 @@
             cursor: pointer;
             font-weight: 600;
         }
+        #inference-box button.stream {
+            background: #58a6ff;
+        }
         #inf-result {
             margin-top: 16px;
             background: #0d1117;
@@ -130,25 +136,22 @@
             white-space: pre-wrap;
             display: none;
             line-height: 1.6;
+            min-height: 60px;
         }
         .footer { text-align: center; padding: 32px; color: #484f58; font-size: 12px; }
         .footer a { color: #58a6ff; text-decoration: none; }
-        #toast {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: #238636;
+        .queue-badge {
+            display: inline-block;
+            background: #da3633;
             color: white;
-            padding: 10px 16px;
-            border-radius: 6px;
-            font-size: 13px;
-            opacity: 0;
-            transition: opacity 0.3s;
-            pointer-events: none;
-            z-index: 200;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
         }
-        #toast.show { opacity: 1; }
-        #toast.error { background: #da3633; }
+        .queue-badge.ok { background: #238636; }
+        .queue-badge.warn { background: #d29922; }
     </style>
 </head>
 <body>
@@ -158,6 +161,9 @@
     </div>
     <div id="stats-bar">
         <div class="stat"><div class="stat-num" id="stat-workers">0</div><div class="stat-label">Active Donors</div></div>
+        <div class="stat"><div class="stat-num" id="stat-python">0</div><div class="stat-label">Python</div></div>
+        <div class="stat"><div class="stat-num" id="stat-ghost">0</div><div class="stat-label">Browser</div></div>
+        <div class="stat"><div class="stat-num" id="stat-pending">0</div><div class="stat-label">Pending</div></div>
         <div class="stat"><div class="stat-num" id="stat-mem">-</div><div class="stat-label">Memory</div></div>
         <div class="stat"><div class="stat-num" id="stat-load">-</div><div class="stat-label">Load</div></div>
     </div>
@@ -165,58 +171,65 @@
         <a href="/terminal" class="nav-btn" target="_blank">💻 Terminal</a>
         <a href="/files" class="nav-btn" target="_blank">📁 Files</a>
         <a href="/static/ghost_worker.html" class="nav-btn" target="_blank">👻 Browser Worker</a>
-        <a href="#" class="nav-btn primary" onclick="downloadWorker(); return false;">⬇ Download Worker</a>
+        <a href="#" class="nav-btn primary" onclick="downloadWorker()">⬇ Download Worker</a>
     </div>
     <div id="main">
         <div class="card">
-            <h2>🧠 Inference Playground</h2>
-            <p style="color:#8b949e; margin-bottom:12px; font-size:13px;">Submit a prompt. It will be routed to an available donor node.</p>
+            <h2>🧠 Inference Playground <span class="queue-badge ok" id="queue-badge">LIVE</span></h2>
+            <p style="color:#8b949e; margin-bottom:12px; font-size:13px;">Submit a prompt. It will be routed to the best available donor node.</p>
             <div id="inference-box">
                 <textarea id="promptInput" placeholder="Explain quantum entanglement in simple terms..."></textarea>
-                <button onclick="runInference()">Run</button>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <button onclick="runInference()">Run (Batch)</button>
+                    <button class="stream" onclick="runStream()">Run (Stream)</button>
+                </div>
             </div>
             <pre id="inf-result"></pre>
         </div>
+
         <div class="card">
             <h2>🔌 Pool API</h2>
             <div class="endpoints">
-                <div class="endpoint"><span class="method get">GET</span><span class="path">/health</span><span class="desc">Pool health + stats</span></div>
-                <div class="endpoint"><span class="method">POST</span><span class="path">/inference</span><span class="desc">Submit inference job</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/health</span><span class="desc">Pool health + queue stats</span></div>
+                <div class="endpoint"><span class="method">POST</span><span class="path">/inference</span><span class="desc">Submit inference job (batch)</span></div>
+                <div class="endpoint"><span class="method get">GET</span><span class="path">/inference/stream?prompt=...</span><span class="desc">Submit inference job (SSE stream)</span></div>
                 <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/worker</span><span class="desc">Connect as compute donor</span></div>
                 <div class="endpoint"><span class="method ws">WS</span><span class="path">/ws/terminal</span><span class="desc">Pool node terminal</span></div>
             </div>
         </div>
     </div>
     <div class="footer">
-        Termux Compute Pool v2.3 — <a href="/pool">Join the Pool</a> — <a href="https://github.com/bekingdomcomejoker-cpu/termux-server" target="_blank">GitHub</a>
+        Termux Compute Pool v2.4 — <a href="/pool">Join the Pool</a> — <a href="https://github.com/bekingdomcomejoker-cpu/termux-server" target="_blank">GitHub</a>
     </div>
-    <div id="toast"></div>
+
     <script>
         const base = window.location.protocol + '//' + window.location.host;
-
-        function showToast(msg, isError) {
-            const t = document.getElementById('toast');
-            t.textContent = msg;
-            t.className = isError ? 'error' : '';
-            t.classList.add('show');
-            setTimeout(() => t.classList.remove('show'), 3000);
-        }
 
         async function loadStats() {
             try {
                 const res = await fetch(base + '/health');
-                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 document.getElementById('stat-workers').textContent = data.workers || 0;
-                if (data.memory) document.getElementById('stat-mem').textContent = data.memory.percent + '%';
-                const infoRes = await fetch(base + '/info');
-                if (infoRes.ok) {
-                    const info = await infoRes.json();
-                    if (info.load_avg) document.getElementById('stat-load').textContent = info.load_avg[0].toFixed(2);
+                document.getElementById('stat-python').textContent = data.python_workers || 0;
+                document.getElementById('stat-ghost').textContent = data.ghost_workers || 0;
+                document.getElementById('stat-pending').textContent = (data.queue && data.queue.pending) || 0;
+
+                const badge = document.getElementById('queue-badge');
+                if (data.queue && data.queue.pending > 10) {
+                    badge.textContent = 'BUSY';
+                    badge.className = 'queue-badge danger';
+                } else if (data.queue && data.queue.pending > 0) {
+                    badge.textContent = 'ACTIVE';
+                    badge.className = 'queue-badge warn';
+                } else {
+                    badge.textContent = 'LIVE';
+                    badge.className = 'queue-badge ok';
                 }
-            } catch (e) {
-                console.warn('Stats load failed:', e);
-            }
+
+                if (data.memory) document.getElementById('stat-mem').textContent = data.memory.percent + '%';
+                const info = await fetch(base + '/info').then(r => r.json());
+                if (info.load_avg) document.getElementById('stat-load').textContent = info.load_avg[0].toFixed(2);
+            } catch(e) {}
         }
 
         async function runInference() {
@@ -224,129 +237,67 @@
             const out = document.getElementById('inf-result');
             if (!prompt.trim()) return;
             out.style.display = 'block';
-            out.textContent = 'Routing to donor node...';
+            out.textContent = 'Queued. Waiting for donor node...';
             try {
                 const res = await fetch(base + '/inference', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({prompt: prompt, prefer_gpu: true})
                 });
-                if (!res.ok) {
-                    const text = await res.text().catch(() => '');
-                    throw new Error('HTTP ' + res.status + (text ? ': ' + text.slice(0, 200) : ''));
-                }
                 const data = await res.json();
-                out.textContent = `[${(data.status || 'unknown').toUpperCase()}]\n\n${data.result || ''}`;
+                out.textContent = `[${data.status.toUpperCase()}]\n\n${data.result || ''}`;
             } catch (e) {
-                out.textContent = 'Error: ' + (e.message || String(e));
+                out.textContent = 'Error: ' + e.message;
             }
+        }
+
+        function runStream() {
+            const prompt = document.getElementById('promptInput').value;
+            const out = document.getElementById('inf-result');
+            if (!prompt.trim()) return;
+            out.style.display = 'block';
+            out.textContent = '';
+
+            const es = new EventSource(base + '/inference/stream?prompt=' + encodeURIComponent(prompt));
+            let buffer = '';
+
+            es.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.token) {
+                        buffer += data.token;
+                        out.textContent = buffer;
+                    } else if (data.status === 'complete') {
+                        out.textContent = buffer + '\n\n[Complete]';
+                        es.close();
+                    } else if (data.status === 'error' || data.status === 'timeout') {
+                        out.textContent = buffer + '\n\n[' + data.status.toUpperCase() + ': ' + (data.result || '') + ']';
+                        es.close();
+                    }
+                } catch (e) {
+                    out.textContent += event.data;
+                }
+            };
+
+            es.onerror = () => {
+                out.textContent += '\n[Stream error]';
+                es.close();
+            };
         }
 
         function downloadWorker() {
-            let url = null;
-            try {
-                if (typeof Blob === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
-                    throw new Error('This browser does not support file downloads via Blob');
-                }
-
-                const wsBase = base.replace(/^http/, 'ws');
-                if (!wsBase || wsBase === base) {
-                    console.warn('Could not derive WebSocket base from', base);
-                }
-
-                const code = [
-                    '#!/usr/bin/env python3',
-                    '# Termux Compute Pool Worker',
-                    '# pip install websocket-client',
-                    'import os, json, time, sys',
-                    'try:',
-                    '    import websocket',
-                    'except ImportError:',
-                    '    print("Install: pip install websocket-client")',
-                    '    sys.exit(1)',
-                    '',
-                    'SERVER = os.environ.get("POOL_SERVER", "' + wsBase + '/ws/worker")',
-                    '',
-                    'def on_message(ws, msg):',
-                    '    try:',
-                    '        data = json.loads(msg)',
-                    '        if data.get("type") == "inference":',
-                    '            result = "[Echo from %s] %s" % (os.uname().nodename, data.get("prompt", "")[:200])',
-                    '            ws.send(json.dumps({"type": "inference_result", "job_id": data.get("job_id"), "result": result}))',
-                    '    except Exception as e:',
-                    '        print("[Worker] on_message error:", e)',
-                    '',
-                    'def on_open(ws):',
-                    '    print("[Worker] Connected to", SERVER)',
-                    '',
-                    'def on_error(ws, err):',
-                    '    print("[Worker] Error:", err)',
-                    '',
-                    'def on_close(ws, code, reason):',
-                    '    print("[Worker] Disconnected. Reconnecting in 5s...")',
-                    '    time.sleep(5)',
-                    '    start()',
-                    '',
-                    'def start():',
-                    '    try:',
-                    '        ws = websocket.WebSocketApp(',
-                    '            SERVER,',
-                    '            on_open=on_open,',
-                    '            on_message=on_message,',
-                    '            on_error=on_error,',
-                    '            on_close=on_close',
-                    '        )',
-                    '        ws.run_forever()',
-                    '    except Exception as e:',
-                    '        print("[Worker] Fatal:", e)',
-                    '        time.sleep(5)',
-                    '        start()',
-                    '',
-                    'if __name__ == "__main__":',
-                    '    print("Termux Compute Pool Worker")',
-                    '    print("Server:", SERVER)',
-                    '    start()',
-                    ''
-                ].join('\n');
-
-                const blob = new Blob([code], { type: 'text/x-python;charset=utf-8' });
-                url = URL.createObjectURL(blob);
-
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'worker_node.py';
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-
-                showToast('Downloaded worker_node.py');
-            } catch (e) {
-                console.error('downloadWorker failed:', e);
-                showToast('Download failed: ' + (e.message || String(e)), true);
-                // Fallback: open raw text in a new tab so user can copy-save
-                try {
-                    const wsBase = base.replace(/^http/, 'ws');
-                    const fallback = '#!/usr/bin/env python3\n# Termux Compute Pool Worker\n# pip install websocket-client\nimport os, json, time, sys\ntry:\n    import websocket\nexcept ImportError:\n    print("Install: pip install websocket-client")\n    sys.exit(1)\nSERVER = os.environ.get("POOL_SERVER", "' + wsBase + '/ws/worker")\nprint("Server:", SERVER)\n';
-                    const win = window.open();
-                    if (win) {
-                        win.document.write('<pre>' + fallback.replace(/</g, '<') + '</pre>');
-                        win.document.title = 'worker_node.py (copy & save)';
-                    }
-                } catch (fallbackErr) {
-                    console.error('Fallback also failed:', fallbackErr);
-                }
-            } finally {
-                if (url) {
-                    setTimeout(function () {
-                        try { URL.revokeObjectURL(url); } catch (_) {}
-                    }, 1000);
-                }
-            }
+            const wsBase = base.replace(/^http/, 'ws');
+            const code = `#!/usr/bin/env python3\n# Termux Compute Pool Worker v2.4\nimport os, json, websocket, time\nSERVER = os.environ.get("POOL_SERVER", "${wsBase}/ws/worker")\ndef on_message(ws, msg):\n    data = json.loads(msg)\n    if data.get("type") == "inference":\n        result = f"[Echo from {os.uname().nodename}] {data['prompt'][:200]}"\n        ws.send(json.dumps({"type": "inference_result", "job_id": data["job_id"], "result": result}))\ndef on_open(ws): print("[Worker] Connected")\ndef on_close(ws, c, m): time.sleep(5); start()\ndef start():\n    ws = websocket.WebSocketApp(SERVER, on_open=on_open, on_message=on_message, on_close=on_close)\n    ws.run_forever()\nif __name__ == "__main__": start()\n`;
+            const blob = new Blob([code], {type: 'text/x-python'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'worker_node.py';
+            a.click();
         }
 
         loadStats();
-        setInterval(loadStats, 10000);
+        setInterval(loadStats, 5000);
     </script>
 </body>
 </html>
