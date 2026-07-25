@@ -9,25 +9,34 @@
         .status { padding: 10px; background: #222; border: 1px solid #0f0; margin: 10px 0; }
         .active { border-color: #0f0; }
         .inactive { border-color: #f00; }
+        .log { background: #111; border: 1px solid #333; padding: 10px; max-height: 200px; overflow: auto; font-size: 12px; color: #8f8; white-space: pre-wrap; }
     </style>
 </head>
 <body>
-    <h1>🖥️ Termux Compute Node (WASM Worker)</h1>
+    <h1>🖥️ Termux Compute Node (Browser Worker)</h1>
     <div id="status" class="status inactive">
         <strong>Status:</strong> <span id="status-text">Connecting...</span><br>
         <strong>Worker ID:</strong> <span id="worker-id">Loading...</span><br>
         <strong>Tasks Completed:</strong> <span id="task-count">0</span>
     </div>
+    <div class="log" id="log"></div>
 
     <script>
-        // Service Worker registration for background persistence
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('ghost_worker_sw.js').catch(e => console.log('SW failed:', e));
+            navigator.serviceWorker.register('/static/ghost_worker_sw.js').catch(e => console.log('SW failed:', e));
         }
 
         const WORKER_ID = 'wasm-' + Math.random().toString(36).substr(2, 9);
         let taskCount = 0;
         let ws = null;
+        let reconnectDelay = 2000;
+
+        function log(msg) {
+            const el = document.getElementById('log');
+            const line = '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n';
+            el.textContent = (el.textContent + line).slice(-4000);
+            el.scrollTop = el.scrollHeight;
+        }
 
         function updateStatus(text, active) {
             document.getElementById('status-text').textContent = text;
@@ -37,63 +46,106 @@
         }
 
         function connectToServer() {
-            const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') + 
-                          '//' + window.location.host + '/ws/worker';
-            ws = new WebSocket(wsUrl);
-
-            ws.onopen = () => {
-                updateStatus('Connected', true);
-                ws.send(JSON.stringify({
-                    type: 'worker_registration',
-                    worker_id: WORKER_ID,
-                    platform: 'WASM/Browser',
-                    capabilities: {
-                        has_gpu: !!navigator.gpu,
-                        cpu_cores: navigator.hardwareConcurrency || 1,
-                        engine: 'webllm'
-                    }
-                }));
-            };
-
-            ws.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                if (msg.type === 'inference_request') {
-                    handleInference(msg);
-                }
-            };
-
-            ws.onerror = () => updateStatus('Error', false);
-            ws.onclose = () => {
-                updateStatus('Disconnected', false);
-                setTimeout(connectToServer, 5000);
-            };
-        }
-
-        async function handleInference(msg) {
-            updateStatus('Processing...', true);
             try {
-                // Placeholder: In production, load a real WASM model here
-                // Example: using transformers.js or similar
-                const result = `[WASM-${WORKER_ID}] Processed: ${msg.prompt.substring(0, 30)}...`;
-                
-                ws.send(JSON.stringify({
-                    type: 'inference_response',
-                    task_id: msg.task_id,
-                    worker_id: WORKER_ID,
-                    result: result
-                }));
-                taskCount++;
-                updateStatus('Connected', true);
+                const wsUrl = (window.location.protocol === 'https:' ? 'wss:' : 'ws:') +
+                              '//' + window.location.host + '/ws/worker';
+                log('Connecting to ' + wsUrl);
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    reconnectDelay = 2000;
+                    updateStatus('Connected', true);
+                    log('Connected as ' + WORKER_ID);
+                    // v2.3 heartbeat + hardware info
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'heartbeat',
+                            hardware: {
+                                hostname: WORKER_ID,
+                                platform: 'WASM/Browser',
+                                cpu_cores: navigator.hardwareConcurrency || 1,
+                                gpu: !!navigator.gpu,
+                                model_loaded: false
+                            }
+                        }));
+                    } catch (e) {
+                        log('heartbeat send failed: ' + e.message);
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        // v2.3: type === 'inference'
+                        // legacy: type === 'inference_request'
+                        if (msg.type === 'inference' || msg.type === 'inference_request') {
+                            handleInference(msg);
+                        }
+                    } catch (e) {
+                        log('parse error: ' + e.message);
+                    }
+                };
+
+                ws.onerror = (err) => {
+                    updateStatus('Error', false);
+                    log('WebSocket error');
+                };
+
+                ws.onclose = () => {
+                    updateStatus('Disconnected', false);
+                    log('Disconnected. Reconnecting in ' + (reconnectDelay / 1000) + 's...');
+                    setTimeout(connectToServer, reconnectDelay);
+                    reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+                };
             } catch (e) {
-                ws.send(JSON.stringify({
-                    type: 'inference_response',
-                    task_id: msg.task_id,
-                    worker_id: WORKER_ID,
-                    result: `Error: ${e.message}`
-                }));
+                updateStatus('Error', false);
+                log('connect failed: ' + e.message);
+                setTimeout(connectToServer, reconnectDelay);
             }
         }
 
+        function handleInference(msg) {
+            const jobId = msg.job_id || msg.task_id;
+            const prompt = msg.prompt || '';
+            updateStatus('Processing...', true);
+            log('Job ' + jobId + ': ' + prompt.slice(0, 60));
+            try {
+                // Placeholder echo — swap in transformers.js / WebLLM for real inference
+                const result = '[WASM-' + WORKER_ID + '] ' + prompt.slice(0, 200);
+
+                // Prefer v2.3 response shape; also send legacy alias if needed
+                const payload = {
+                    type: 'inference_result',
+                    job_id: jobId,
+                    result: result
+                };
+                ws.send(JSON.stringify(payload));
+                taskCount++;
+                updateStatus('Connected', true);
+                log('Job ' + jobId + ' done');
+            } catch (e) {
+                log('inference error: ' + e.message);
+                try {
+                    ws.send(JSON.stringify({
+                        type: 'inference_result',
+                        job_id: jobId,
+                        result: 'Error: ' + e.message
+                    }));
+                } catch (_) {}
+                updateStatus('Connected', true);
+            }
+        }
+
+        // Periodic heartbeat while connected
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                try {
+                    ws.send(JSON.stringify({ type: 'heartbeat' }));
+                } catch (_) {}
+            }
+        }, 30000);
+
+        document.getElementById('worker-id').textContent = WORKER_ID;
         connectToServer();
     </script>
 </body>
