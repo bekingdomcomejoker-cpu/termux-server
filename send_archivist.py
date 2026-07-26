@@ -87,12 +87,19 @@ def shadow():
 def textarea():
     return driver.execute_script("return arguments[0].querySelector('textarea')", shadow())
 
-def wait_reply(timeout=60):
-    last, stable = None, 0
-    msgs = []
-    for _ in range(timeout):
-        time.sleep(1)
-        msgs = driver.execute_script("""
+def is_typing():
+    """Check if Rain is still generating (loader/typing indicator visible)."""
+    try:
+        return driver.execute_script("""
+const root = arguments[0];
+const loader = root.querySelector('.loader, .typing, [class*="loader"], [class*="typing"], .spinner, .dots');
+return !!(loader && loader.offsetParent !== null);
+""", shadow())
+    except Exception:
+        return False
+
+def get_messages():
+    return driver.execute_script("""
 const m=[];
 arguments[0].querySelectorAll('.user-query,.ai-response').forEach(e=>{
 let t=(e.innerText||e.textContent||'').trim();
@@ -102,30 +109,71 @@ m.push(t);
 });
 return m;
 """, shadow())
+
+def is_complete(text):
+    """Rain is done if text ends with terminal punctuation or is very stable."""
+    t = text.strip()
+    if not t:
+        return False
+    # Ends with sentence terminator or closing punctuation
+    return t[-1] in '.!?…)]}>'
+
+def wait_reply(timeout=120):
+    """
+    Wait until Rain is truly done:
+    - No loader visible
+    - Text stable for 5+ seconds
+    - Text ends with terminal punctuation OR stable for 10+ seconds (fallback)
+    """
+    last_text = None
+    stable_since = None
+    start = time.time()
+
+    while time.time() - start < timeout:
+        time.sleep(0.8)
+
+        if is_typing():
+            last_text = None
+            stable_since = None
+            continue
+
+        msgs = get_messages()
         if not msgs:
             continue
-        cur = msgs[-1]
-        if not cur.strip() or "loader" in cur.lower():
-            last, stable = None, 0
+
+        current = msgs[-1]
+
+        # Skip empty/loader placeholders
+        if not current.strip() or "loader" in current.lower():
+            last_text = None
+            stable_since = None
             continue
-        if cur == last:
-            stable += 1
-            if stable >= 3:
-                break
+
+        if current == last_text:
+            if stable_since is None:
+                stable_since = time.time()
+            elapsed = time.time() - stable_since
+
+            # Done if stable for 5s AND ends with punctuation
+            if elapsed >= 5 and is_complete(current):
+                return current
+            # Emergency fallback: stable for 10s even without punctuation
+            if elapsed >= 10:
+                return current
         else:
-            last = cur
-            stable = 0
+            last_text = current
+            stable_since = None
+
+    # Timeout — return best effort
+    msgs = get_messages()
     return msgs[-1] if msgs else ""
 
 def drain_stdin():
-    """Flush any buffered paste residue so Rain gets one message at a time."""
     while select.select([sys.stdin], [], [], 0.05)[0]:
         sys.stdin.readline()
 
 def read_input():
-    """Read one line; if a paste followed, slurp the rest into the same message."""
     first = input("\nYou: ")
-    # Small window to catch paste buffer
     time.sleep(0.1)
     lines = [first]
     while select.select([sys.stdin], [], [], 0.1)[0]:
@@ -138,7 +186,6 @@ def read_input():
 def send(text):
     box = textarea()
     box.click()
-    # Clear any stale content
     box.send_keys(Keys.CONTROL + "a")
     box.send_keys(Keys.DELETE)
     box.send_keys(text)
@@ -148,7 +195,7 @@ def send(text):
 
 print("=" * 50)
 print("  Termux AI Chat — AskRain (Archivist Edition)")
-print("  Multi-line paste aware — sends as one block")
+print("  Multi-line paste aware — waits for FULL reply")
 print("  Commands: /quit, /exit")
 print("=" * 50)
 print("[*] Loading Rain...")
@@ -157,7 +204,7 @@ time.sleep(5)
 
 print("[+] Sending archivist payload...")
 send(PAYLOAD)
-print("[*] Waiting for reply...")
+print("[*] Waiting for full reply...")
 reply = wait_reply()
 print(f"<<< {reply}")
 
@@ -177,7 +224,7 @@ while True:
         continue
 
     send(user_input)
-    print("[*] Thinking...")
+    print("[*] Waiting for full reply...")
     reply = wait_reply()
     print(f"<<< {reply}")
     drain_stdin()
