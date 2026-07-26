@@ -1,72 +1,105 @@
 #!/usr/bin/env python3
-"""
-chat.py — Interactive AI chat CLI for Termux
-Stays open. Type freely. Sends to Duck.ai via Selenium. Prints response.
-"""
-
 import os
+import time
 import sys
-import readline
 
-# Import our bot from the tools folder
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
-from unified_ai_bot import DuckAIBot, BotConfig
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+
+URL = "https://askrain.rain.co.za/?id=7yAzKgvD7I6wVGEHMrQazaYjlhAILGXzjTzvAx8nVWk%3D"
+
+CHROME_BINARY = os.environ.get("CHROME_BINARY", "/data/data/com.termux/files/usr/bin/chromium-browser")
+CHROMEDRIVER_PATH = os.environ.get("CHROMEDRIVER_PATH", "/data/data/com.termux/files/usr/bin/chromedriver")
+
+opts = Options()
+opts.binary_location = CHROME_BINARY
+opts.add_argument("--headless=new")
+opts.add_argument("--no-sandbox")
+opts.add_argument("--disable-dev-shm-usage")
+opts.add_argument("--window-size=1400,2200")
+
+driver = webdriver.Chrome(service=Service(CHROMEDRIVER_PATH), options=opts)
+
+def shadow():
+    host = driver.find_element(By.TAG_NAME, "ai-chat-bot")
+    return driver.execute_script("return arguments[0].shadowRoot", host)
+
+def textarea():
+    root = shadow()
+    return driver.execute_script("return arguments[0].querySelector('textarea')", root)
+
+def dump_messages():
+    root = shadow()
+    return driver.execute_script("""
+const msgs = [];
+arguments[0].querySelectorAll(".user-query, .ai-response").forEach(e => {
+    let txt = (e.innerText || e.textContent || "").trim();
+    if (!txt) {
+        const p = e.querySelector("p");
+        if (p) txt = (p.innerText || p.textContent || "").trim();
+    }
+    if (!txt) txt = e.innerHTML;
+    msgs.push(txt);
+});
+return msgs;
+""", root)
+
+def wait_for_reply(timeout=60):
+    last_text = None
+    stable = 0
+    msgs = []
+    for _ in range(timeout):
+        time.sleep(1)
+        msgs = dump_messages()
+        if not msgs:
+            continue
+        current = msgs[-1]
+        t = current.strip().lower()
+        if (not t) or ("loader" in t):
+            last_text = None
+            stable = 0
+            continue
+        if current == last_text:
+            stable += 1
+            if stable >= 3:
+                break
+        else:
+            last_text = current
+            stable = 0
+    return msgs[-1] if msgs else ""
+
+def send_message(text):
+    box = textarea()
+    box.click()
+    box.send_keys(text)
+    box.send_keys(Keys.ENTER)
+    print(f"\n>>> {text}")
 
 print("=" * 50)
-print("  Termux AI Chat — Duck.ai")
-print("  Type your message and hit Enter")
-print("  Commands: /quit, /exit, /model, /clear")
+print("  Termux AI Chat — AskRain (Rain ISP)")
+print("  Type /quit or /exit to close")
 print("=" * 50)
-
-config = BotConfig(
-    headless=True,
-    stealth=True,
-    screenshot_on_fail=True,
-    chromedriver_path=os.environ.get("CHROMEDRIVER_PATH"),
-    binary_location=os.environ.get("CHROME_BINARY"),
-)
-
-bot = DuckAIBot(config)
-
-# Optional: start browser once and reuse it
-print("[*] Starting browser (this takes a few seconds)...")
-try:
-    bot.start()
-    print("[+] Browser ready.\n")
-except Exception as e:
-    print(f"[!] Failed to start browser: {e}")
-    sys.exit(1)
+print("[*] Loading AskRain...")
+driver.get(URL)
+time.sleep(5)
+print("[+] Ready.\n")
 
 while True:
     try:
         user_input = input("You: ").strip()
     except (EOFError, KeyboardInterrupt):
-        print("\n[*] Exiting.")
         break
-
+    if user_input in ("/quit", "/exit"):
+        break
     if not user_input:
         continue
-
-    if user_input.lower() in ("/quit", "/exit", "quit", "exit"):
-        print("[*] Closing browser...")
-        break
-
-    if user_input.lower() == "/clear":
-        os.system("clear")
-        continue
-
+    send_message(user_input)
     print("[*] Thinking...")
-    try:
-        response = bot.send_message(user_input)
-        print(f"AI: {response}\n")
-    except Exception as e:
-        print(f"[!] Error: {e}\n")
-        # Reset browser on failure
-        try:
-            bot.stop()
-            bot.start()
-        except Exception:
-            pass
+    reply = wait_for_reply()
+    print(f"<<< {reply}")
 
-bot.stop()
-print("[*] Done.")
+driver.quit()
+print("\n[*] Session ended.")
