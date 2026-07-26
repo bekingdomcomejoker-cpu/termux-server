@@ -25,14 +25,17 @@
   }
   .status-idle { background: #21262d; color: #8b949e; }
   .status-active { background: #23863633; color: #3fb950; border: 1px solid #238636; }
+  .status-busy { background: #9e6a0333; color: #d29922; border: 1px solid #9e6a03; }
+  .status-error { background: #f8514933; color: #f85149; border: 1px solid #f85149; }
   .log {
     background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
     padding: 1rem; font-family: monospace; font-size: 0.8rem;
-    height: 200px; overflow-y: auto; text-align: left; color: #a5d6ff;
+    height: 250px; overflow-y: auto; text-align: left; color: #a5d6ff;
     margin-top: 1rem;
   }
   .log .err { color: #f85149; }
   .log .ok { color: #3fb950; }
+  .log .warn { color: #d29922; }
   .btn {
     padding: 0.6rem 1.2rem; background: #1f6feb; color: #fff; border: none;
     border-radius: 6px; cursor: pointer; font-size: 0.9rem; margin: 0.3rem;
@@ -48,20 +51,20 @@
 <body>
 <div class="card">
   <h1>👻 Ghost Worker</h1>
-  <p class="subtitle">Silent browser compute node for the Termux Pool</p>
+  <p class="subtitle">Pool presence node — does NOT process inference jobs</p>
 
   <div class="status status-idle" id="status-badge">
-    <span id="status-dot">○</span> <span id="status-text">Idle — click Start to donate compute</span>
+    <span id="status-dot">○</span> <span id="status-text">Idle — click Start</span>
   </div>
 
   <div class="stats">
     <div class="stat-box">
-      <div class="num" id="jobs-done">0</div>
-      <div class="label">Jobs Completed</div>
+      <div class="num" id="jobs-seen">0</div>
+      <div class="label">Jobs Seen</div>
     </div>
     <div class="stat-box">
-      <div class="num" id="tokens-gen">0</div>
-      <div class="label">Tokens Generated</div>
+      <div class="num" id="pongs-sent">0</div>
+      <div class="label">Keepalives</div>
     </div>
   </div>
 
@@ -76,8 +79,11 @@
 <script>
 let running = false;
 let ws = null;
-let jobsDone = 0;
-let tokensGen = 0;
+let reconnectTimer = null;
+let keepaliveTimer = null;
+let reconnectDelay = 1000;
+let jobsSeen = 0;
+let pongsSent = 0;
 
 function log(msg, type="info") {
   const el = document.getElementById("log");
@@ -88,15 +94,20 @@ function log(msg, type="info") {
   el.scrollTop = el.scrollHeight;
 }
 
-async function startWorker() {
+function setStatus(cls, dot, text) {
+  const badge = document.getElementById("status-badge");
+  badge.className = "status status-" + cls;
+  document.getElementById("status-dot").textContent = dot;
+  document.getElementById("status-text").textContent = text;
+}
+
+function startWorker() {
   if (running) return;
   running = true;
-
+  clearTimeout(reconnectTimer);
   document.getElementById("btn-start").disabled = true;
   document.getElementById("btn-stop").disabled = false;
-  document.getElementById("status-badge").className = "status status-active";
-  document.getElementById("status-dot").textContent = "●";
-  document.getElementById("status-text").textContent = "Active — connected to pool";
+  setStatus("active", "●", "Connecting...");
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = protocol + "//" + window.location.host + "/ws/worker";
@@ -104,15 +115,18 @@ async function startWorker() {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    reconnectDelay = 1000;
     log("Connected to coordinator", "ok");
+    setStatus("active", "●", "Active — presence only");
+    // NOTE: No "default" in models — we do NOT process inference jobs
     ws.send(JSON.stringify({
       type: "register",
       worker_id: "ghost-browser-" + Math.random().toString(36).slice(2, 8),
       capabilities: {
-        models: ["ghost-wasm", "default"],
-        max_concurrent: 1,
+        models: ["ghost-wasm"],  // NO "default" — won't steal inference jobs
+        max_concurrent: 0,
         supports_streaming: false,
-        backend: "browser_wasm",
+        backend: "browser_presence",
         type: "ghost_worker"
       },
       hardware: {
@@ -121,6 +135,14 @@ async function startWorker() {
         ram: navigator.deviceMemory || "unknown"
       }
     }));
+
+    keepaliveTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: "pong", worker_id: "ghost", timestamp: Date.now()}));
+        pongsSent++;
+        document.getElementById("pongs-sent").textContent = pongsSent;
+      }
+    }, 15000);
   };
 
   ws.onmessage = async (e) => {
@@ -129,20 +151,32 @@ async function startWorker() {
       if (msg.type === "ping") {
         ws.send(JSON.stringify({type: "pong", worker_id: msg.worker_id || "ghost"}));
       } else if (msg.type === "inference_request") {
-        await handleJob(msg);
+        // We should never receive these (no "default" model), but reject just in case
+        jobsSeen++;
+        document.getElementById("jobs-seen").textContent = jobsSeen;
+        log(`Job ${msg.job_id}: rejected (ghost worker does not process jobs)`, "warn");
+        ws.send(JSON.stringify({
+          type: "inference_response",
+          job_id: msg.job_id,
+          worker_id: "ghost-browser",
+          status: "error",
+          error: "Ghost worker is presence-only. Use Selenium worker for real inference."
+        }));
       } else if (msg.type === "registered") {
         log("Registered as " + msg.worker_id, "ok");
       }
     } catch (err) {
-      log("WS message error: " + err, "err");
+      log("WS handler error: " + err.message, "err");
     }
   };
 
   ws.onclose = () => {
-    log("Connection closed", "err");
+    clearInterval(keepaliveTimer);
     if (running) {
-      log("Reconnecting in 5s...", "info");
-      setTimeout(startWorker, 5000);
+      log(`Disconnected. Reconnecting in ${reconnectDelay/1000}s...`, "warn");
+      setStatus("error", "✕", "Reconnecting...");
+      reconnectTimer = setTimeout(startWorker, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
     }
   };
 
@@ -151,40 +185,17 @@ async function startWorker() {
   };
 }
 
-async function handleJob(msg) {
-  const jobId = msg.job_id;
-  const prompt = msg.prompt;
-  log(`Job ${jobId}: ${prompt.slice(0, 40)}...`);
-
-  const response = `[Ghost Worker] Simulated response to: "${prompt.slice(0, 100)}"\n\n` +
-    `This is a browser-based ghost worker. In production, this would run a WASM LLM ` +
-    `(e.g., wllama, llama.cpp wasm) to process the prompt locally and return real inference.`;
-
-  await new Promise(r => setTimeout(r, 2000));
-
-  ws.send(JSON.stringify({
-    type: "inference_response",
-    job_id: jobId,
-    worker_id: "ghost-browser",
-    status: "success",
-    response: response
-  }));
-
-  jobsDone++;
-  tokensGen += Math.floor(response.length / 4);
-  document.getElementById("jobs-done").textContent = jobsDone;
-  document.getElementById("tokens-gen").textContent = tokensGen;
-  log(`Job ${jobId}: completed`, "ok");
-}
-
 function stopWorker() {
   running = false;
-  if (ws) ws.close();
+  clearTimeout(reconnectTimer);
+  clearInterval(keepaliveTimer);
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+  }
   document.getElementById("btn-start").disabled = false;
   document.getElementById("btn-stop").disabled = true;
-  document.getElementById("status-badge").className = "status status-idle";
-  document.getElementById("status-dot").textContent = "○";
-  document.getElementById("status-text").textContent = "Idle — click Start to donate compute";
+  setStatus("idle", "○", "Idle — click Start");
   log("Ghost worker stopped");
 }
 

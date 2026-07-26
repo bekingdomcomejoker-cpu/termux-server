@@ -2,7 +2,6 @@
 """
 worker_node.py
 Generic compute worker for the Termux Server pool.
-Can run shell commands, local scripts, or delegate to browser automation.
 """
 
 import asyncio
@@ -46,12 +45,13 @@ class GenericWorker:
     def __init__(self):
         self.ws = None
         self.hardware = get_hardware_info()
+        self.keepalive_task = None
 
     async def connect(self):
         headers = {}
         if API_KEY:
             headers["X-API-Key"] = API_KEY
-        self.ws = await websockets.connect(COORDINATOR_URL, extra_headers=headers)
+        self.ws = await websockets.connect(COORDINATOR_URL, additional_headers=headers)
         logger.info(f"Connected to coordinator")
 
         await self.ws.send(json.dumps({
@@ -66,6 +66,21 @@ class GenericWorker:
             },
             "hardware": self.hardware
         }))
+
+        self.keepalive_task = asyncio.create_task(self._keepalive())
+
+    async def _keepalive(self):
+        while True:
+            await asyncio.sleep(20)
+            if self.ws and self.ws.open:
+                try:
+                    await self.ws.send(json.dumps({
+                        "type": "pong",
+                        "worker_id": WORKER_ID,
+                        "timestamp": time.time()
+                    }))
+                except Exception:
+                    break
 
     async def run(self):
         await self.connect()
@@ -93,6 +108,8 @@ class GenericWorker:
         except websockets.exceptions.ConnectionClosed:
             logger.warning("Connection closed")
         finally:
+            if self.keepalive_task:
+                self.keepalive_task.cancel()
             logger.info("Worker stopped")
 
     async def handle_job(self, data: dict):

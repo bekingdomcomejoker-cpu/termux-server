@@ -2,7 +2,7 @@
 """
 duckai_worker.py
 Duck.ai inference worker for the Termux Server compute pool.
-Registers with the coordinator and handles inference jobs via browser automation.
+Uses Selenium/Chromium to bypass bot detection.
 """
 
 import asyncio
@@ -38,6 +38,7 @@ class DuckAIWorker:
             binary_location=os.environ.get("CHROME_BINARY"),
             user_data_dir=os.environ.get("CHROME_USER_DATA_DIR"),
         )
+        self.keepalive_task = None
 
     async def connect(self):
         headers = {}
@@ -45,14 +46,14 @@ class DuckAIWorker:
             headers["X-API-Key"] = API_KEY
 
         logger.info(f"Connecting to {COORDINATOR_URL} ...")
-        self.ws = await websockets.connect(COORDINATOR_URL, extra_headers=headers)
+        self.ws = await websockets.connect(COORDINATOR_URL, additional_headers=headers)
         logger.info("Connected to coordinator")
 
         await self.ws.send(json.dumps({
             "type": "register",
             "worker_id": WORKER_ID,
             "capabilities": {
-                "models": ["duckai-gpt4o", "duckai-claude-3-haiku", "duckai-llama-3.1"],
+                "models": ["duckai-gpt4o", "duckai-claude-3-haiku", "duckai-llama-3.1", "default"],
                 "max_concurrent": 1,
                 "supports_streaming": False,
                 "backend": "duck.ai",
@@ -64,6 +65,22 @@ class DuckAIWorker:
                 "chrome_available": True
             }
         }))
+
+        # Start keepalive pongs every 20s so server doesn't mark us stale
+        self.keepalive_task = asyncio.create_task(self._keepalive())
+
+    async def _keepalive(self):
+        while True:
+            await asyncio.sleep(20)
+            if self.ws and self.ws.open:
+                try:
+                    await self.ws.send(json.dumps({
+                        "type": "pong",
+                        "worker_id": WORKER_ID,
+                        "timestamp": time.time()
+                    }))
+                except Exception:
+                    break
 
     async def run(self):
         await self.connect()
@@ -94,6 +111,8 @@ class DuckAIWorker:
         except Exception as e:
             logger.error(f"Worker error: {e}")
         finally:
+            if self.keepalive_task:
+                self.keepalive_task.cancel()
             if self.bot:
                 self.bot.stop()
             logger.info("Worker stopped")
@@ -123,7 +142,7 @@ class DuckAIWorker:
                 "response": response,
                 "model": model
             }))
-            logger.info(f"Job {job_id}: success")
+            logger.info(f"Job {job_id}: success ({len(response)} chars)")
 
         except Exception as e:
             logger.error(f"Job {job_id} failed: {e}")
