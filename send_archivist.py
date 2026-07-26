@@ -87,86 +87,56 @@ def shadow():
 def textarea():
     return driver.execute_script("return arguments[0].querySelector('textarea')", shadow())
 
-def is_typing():
-    """Check if Rain is still generating (loader/typing indicator visible)."""
-    try:
-        return driver.execute_script("""
-const root = arguments[0];
-const loader = root.querySelector('.loader, .typing, [class*="loader"], [class*="typing"], .spinner, .dots');
-return !!(loader && loader.offsetParent !== null);
-""", shadow())
-    except Exception:
-        return False
-
-def get_messages():
+def get_last_ai_text():
+    """Return text of the last .ai-response element only."""
     return driver.execute_script("""
-const m=[];
-arguments[0].querySelectorAll('.user-query,.ai-response').forEach(e=>{
-let t=(e.innerText||e.textContent||'').trim();
-if(!t){const p=e.querySelector('p');if(p)t=(p.innerText||p.textContent||'').trim();}
-if(!t)t=e.innerHTML;
-m.push(t);
-});
-return m;
+const root = arguments[0];
+const msgs = root.querySelectorAll('.ai-response');
+if (!msgs.length) return '';
+const last = msgs[msgs.length - 1];
+let t = (last.innerText || last.textContent || '').trim();
+if (!t) {
+    const p = last.querySelector('p');
+    if (p) t = (p.innerText || p.textContent || '').trim();
+}
+return t;
 """, shadow())
 
-def is_complete(text):
-    """Rain is done if text ends with terminal punctuation or is very stable."""
-    t = text.strip()
-    if not t:
-        return False
-    # Ends with sentence terminator or closing punctuation
-    return t[-1] in '.!?…)]}>'
-
-def wait_reply(timeout=120):
+def wait_reply(timeout=60):
     """
-    Wait until Rain is truly done:
-    - No loader visible
-    - Text stable for 5+ seconds
-    - Text ends with terminal punctuation OR stable for 10+ seconds (fallback)
+    Wait for the last .ai-response to stabilize.
+    Rain is done when text hasn't changed for 4 seconds.
     """
     last_text = None
     stable_since = None
+    dots = 0
     start = time.time()
 
     while time.time() - start < timeout:
-        time.sleep(0.8)
+        time.sleep(0.5)
 
-        if is_typing():
-            last_text = None
-            stable_since = None
-            continue
+        current = get_last_ai_text()
 
-        msgs = get_messages()
-        if not msgs:
-            continue
-
-        current = msgs[-1]
-
-        # Skip empty/loader placeholders
-        if not current.strip() or "loader" in current.lower():
-            last_text = None
-            stable_since = None
+        # Rain hasn't replied yet (or text is empty)
+        if not current:
+            if dots % 4 == 0:
+                sys.stdout.write(".")
+                sys.stdout.flush()
+            dots += 1
             continue
 
         if current == last_text:
             if stable_since is None:
                 stable_since = time.time()
-            elapsed = time.time() - stable_since
-
-            # Done if stable for 5s AND ends with punctuation
-            if elapsed >= 5 and is_complete(current):
-                return current
-            # Emergency fallback: stable for 10s even without punctuation
-            if elapsed >= 10:
+            if time.time() - stable_since >= 4:
+                print()  # newline after dots
                 return current
         else:
             last_text = current
             stable_since = None
 
-    # Timeout — return best effort
-    msgs = get_messages()
-    return msgs[-1] if msgs else ""
+    print()
+    return last_text or ""
 
 def drain_stdin():
     while select.select([sys.stdin], [], [], 0.05)[0]:
@@ -204,7 +174,7 @@ time.sleep(5)
 
 print("[+] Sending archivist payload...")
 send(PAYLOAD)
-print("[*] Waiting for full reply...")
+print("[*] Waiting for full reply...", end="", flush=True)
 reply = wait_reply()
 print(f"<<< {reply}")
 
@@ -224,7 +194,7 @@ while True:
         continue
 
     send(user_input)
-    print("[*] Waiting for full reply...")
+    print("[*] Waiting for full reply...", end="", flush=True)
     reply = wait_reply()
     print(f"<<< {reply}")
     drain_stdin()
