@@ -2,6 +2,7 @@
 import os
 import time
 import sys
+import select
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -116,17 +117,39 @@ return m;
             stable = 0
     return msgs[-1] if msgs else ""
 
+def drain_stdin():
+    """Flush any buffered paste residue so Rain gets one message at a time."""
+    while select.select([sys.stdin], [], [], 0.05)[0]:
+        sys.stdin.readline()
+
+def read_input():
+    """Read one line; if a paste followed, slurp the rest into the same message."""
+    first = input("\nYou: ")
+    # Small window to catch paste buffer
+    time.sleep(0.1)
+    lines = [first]
+    while select.select([sys.stdin], [], [], 0.1)[0]:
+        extra = sys.stdin.readline()
+        if not extra:
+            break
+        lines.append(extra.rstrip('\n'))
+    return "\n".join(lines).strip()
+
 def send(text):
     box = textarea()
     box.click()
+    # Clear any stale content
+    box.send_keys(Keys.CONTROL + "a")
+    box.send_keys(Keys.DELETE)
     box.send_keys(text)
     box.send_keys(Keys.ENTER)
-    print(f"\n>>> {text[:60]}{'...' if len(text) > 60 else ''}")
+    preview = text.replace('\n', ' ')[:70]
+    print(f"\n>>> {preview}{'...' if len(text) > 70 else ''}")
 
 print("=" * 50)
 print("  Termux AI Chat — AskRain (Archivist Edition)")
-print("  Payload fires first, then CLI opens")
-print("  Commands: /quit, /exit, /clear")
+print("  Multi-line paste aware — sends as one block")
+print("  Commands: /quit, /exit")
 print("=" * 50)
 print("[*] Loading Rain...")
 driver.get(URL)
@@ -140,21 +163,24 @@ print(f"<<< {reply}")
 
 print("\n" + "-" * 50)
 print("  Payload delivered. Interactive mode active.")
+print("  Paste long text freely — it will batch as one message.")
 print("-" * 50)
 
 while True:
     try:
-        user_input = input("\nYou: ").strip()
+        user_input = read_input()
     except (EOFError, KeyboardInterrupt):
         break
     if user_input in ("/quit", "/exit"):
         break
     if not user_input:
         continue
+
     send(user_input)
     print("[*] Thinking...")
     reply = wait_reply()
     print(f"<<< {reply}")
+    drain_stdin()
 
 driver.quit()
 print("\n[*] Session ended.")
