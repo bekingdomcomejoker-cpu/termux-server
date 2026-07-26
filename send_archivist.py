@@ -102,41 +102,63 @@ if (!t) {
 return t;
 """, shadow())
 
-def wait_reply(timeout=60):
+def wait_reply(timeout=90):
     """
-    Wait for the last .ai-response to stabilize.
-    Rain is done when text hasn't changed for 4 seconds.
+    Adaptive wait:
+    - If text is actively growing/changing: keep waiting (reset timer)
+    - If text is stable and short (<300 chars) + ends with punctuation: return after 3s
+    - If text is stable and long: return after 7s of stability
+    - Absolute max: 90s
     """
-    last_text = None
+    last_text = ""
+    last_len = 0
     stable_since = None
+    last_change_time = None
     dots = 0
     start = time.time()
 
     while time.time() - start < timeout:
-        time.sleep(0.5)
+        time.sleep(0.6)
 
         current = get_last_ai_text()
 
-        # Rain hasn't replied yet (or text is empty)
+        # Rain hasn't replied yet
         if not current:
-            if dots % 4 == 0:
+            if dots % 5 == 0:
                 sys.stdout.write(".")
                 sys.stdout.flush()
             dots += 1
             continue
 
-        if current == last_text:
-            if stable_since is None:
-                stable_since = time.time()
-            if time.time() - stable_since >= 4:
-                print()  # newline after dots
-                return current
-        else:
+        current_len = len(current)
+
+        # Text is actively changing — Rain is still typing
+        if current != last_text:
             last_text = current
+            last_len = current_len
             stable_since = None
+            last_change_time = time.time()
+            continue
+
+        # Text is stable — start/continue stability timer
+        if stable_since is None:
+            stable_since = time.time()
+
+        stable_for = time.time() - stable_since
+        since_last_change = time.time() - (last_change_time or stable_since)
+
+        # Fast path: short reply that ends with punctuation, stable for 3s
+        if current_len < 300 and current_len > 0 and current[-1] in '.!?' and stable_for >= 3:
+            print()
+            return current
+
+        # Standard path: any reply stable for 7s after last change
+        if stable_for >= 7 and since_last_change >= 7:
+            print()
+            return current
 
     print()
-    return last_text or ""
+    return last_text
 
 def drain_stdin():
     while select.select([sys.stdin], [], [], 0.05)[0]:
@@ -165,7 +187,7 @@ def send(text):
 
 print("=" * 50)
 print("  Termux AI Chat — AskRain (Archivist Edition)")
-print("  Multi-line paste aware — waits for FULL reply")
+print("  Adaptive wait: grows with reply length")
 print("  Commands: /quit, /exit")
 print("=" * 50)
 print("[*] Loading Rain...")
@@ -180,7 +202,7 @@ print(f"<<< {reply}")
 
 print("\n" + "-" * 50)
 print("  Payload delivered. Interactive mode active.")
-print("  Paste long text freely — it will batch as one message.")
+print("  Long replies wait longer, short replies snap back.")
 print("-" * 50)
 
 while True:
